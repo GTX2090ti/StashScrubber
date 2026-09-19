@@ -128,8 +128,8 @@ struct ScenesView: View {
         } else {
             ScrollView {
                 if viewMode == "grid" {
-                    // 横版网格：一排 2 个 16:9 卡片，卡片排版与演员卡片同构
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                    // 海报网格：竖版 2:3 海报卡片，自适应列数（与演员页同款网格）
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 14) {
                         ForEach(vm.scenes) { s in
                             NavigationLink(value: s.id) {
                                 SceneCard(scene: s)
@@ -176,9 +176,9 @@ struct SceneCard: View {
     let scene: Scene
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp)
-                .aspectRatio(16 / 9, contentMode: .fill)
+        VStack(spacing: 5) {
+            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp, placeholderIcon: "film")
+                .frame(width: 120, height: 180)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             Text(scene.title ?? "（无标题）")
                 .font(.caption.weight(.medium))
