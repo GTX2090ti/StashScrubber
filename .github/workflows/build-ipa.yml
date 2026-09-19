@@ -1,0 +1,57 @@
+# 在 GitHub Actions 的 macOS runner 上构建未签名 IPA（Windows 用户免 Mac 编译）
+#
+# 使用方式：
+#   1. 把整个 StashScrubber 目录推到 GitHub（建议私有仓库也行，Actions 有免费额度）
+#   2. Actions 页面手动触发 "Build unsigned IPA"，或推送 tag 自动触发
+#   3. 构建完成后在 run 的 Artifacts 里下载 StashScrubber-unsigned.ipa
+#   4. Windows 上用 AltStore / Sideloadly / 爱思助手 自签安装（Apple ID 免费证书 7 天有效）
+#
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon，Xcode 15/16 已预装
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Show schemes
+        run: xcodebuild -list -project StashScrubber.xcodeproj
+
+      - name: Archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project StashScrubber.xcodeproj \
+            -scheme StashScrubber \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/StashScrubber.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/StashScrubber.xcarchive/Products/Applications/StashScrubber.app" build/Payload/
+          cd build
+          zip -r StashScrubber-unsigned.ipa Payload
+          mv StashScrubber-unsigned.ipa ../
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StashScrubber-unsigned-ipa
+          path: StashScrubber-unsigned.ipa
+          retention-days: 30

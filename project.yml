@@ -1,0 +1,50 @@
+name: StashScrubber
+options:
+  bundleIdPrefix: com.hsx.stash
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    TARGETED_DEVICE_FAMILY: "1,2"   # 1=iPhone, 2=iPad
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: "NO"
+
+# CI 使用的构建方案（GitHub Actions macOS runner 上 xcodebuild 需要 scheme）
+schemes:
+  StashScrubber:
+    build:
+      targets:
+        StashScrubber: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+targets:
+  StashScrubber:
+    type: application
+    platform: iOS
+    sources:
+      - path: StashScrubber
+    info:
+      path: StashScrubber/Info.plist
+      properties:
+        CFBundleDisplayName: Stash 削刮
+        UILaunchScreen: {}
+        # 内网 HTTP 访问 Stash 必须放开 ATS
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
