@@ -144,7 +144,7 @@ final class AppSettings: ObservableObject {
         guard let p = activeProfile, !p.url.isEmpty else {
             throw StashAPIError.badURL("请先在设置中配置 Stash 服务器地址")
         }
-        return GraphQLClient(baseURL: p.url, apiKey: p.apiKey)
+        return try GraphQLClient(baseURL: p.url, apiKey: p.apiKey)
     }
 
     func updateActive(name: String? = nil, url: String? = nil, apiKey: String? = nil) {

@@ -345,22 +345,6 @@ enum StashAPI {
         return r.scrapePerformerURL.compactMap { $0 }
     }
 
-    /// 演员 URL 削刮
-    static func scrapePerformerURL(_ c: GraphQLClient, url: String) async throws -> [ScrapedPerformer] {
-        struct R: Decodable { let scrapePerformerURL: [ScrapedPerformer?] }
-        let q = """
-        mutation ScrapePerformerURL($url: String!) {
-          scrapePerformerURL(url: $url) {
-            id stored_id name disambiguation birthdate details country ethnicity
-            measurements career_length urls image_path
-            tags { id stored_id name }
-          }
-        }
-        """
-        let r: R = try await c.send(q, variables: ["url": url], as: R.self)
-        return r.scrapePerformerURL.compactMap { $0 }
-    }
-
     // MARK: 元数据写回
 
     static func updateScene(_ c: GraphQLClient, input: SceneUpdateInput) async throws {

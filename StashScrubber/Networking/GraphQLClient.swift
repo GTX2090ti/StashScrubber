@@ -29,6 +29,13 @@ enum StashAPIError: LocalizedError {
     }
 }
 
+// MARK: - GraphQL 响应信封（泛型类型须定义在函数外，不能嵌套在泛型方法里）
+
+private struct Envelope<T: Decodable>: Decodable {
+    let data: T?
+    let errors: [GraphQLErrorItem]?
+}
+
 // MARK: - 轻量 GraphQL 客户端（无第三方依赖）
 
 final class GraphQLClient {
@@ -77,14 +84,9 @@ final class GraphQLClient {
             throw StashAPIError.http(http.statusCode, text)
         }
 
-        struct Envelope: Decodable {
-            let data: T?
-            let errors: [GraphQLErrorItem]?
-        }
-
-        let env: Envelope
+        let env: Envelope<T>
         do {
-            env = try JSONDecoder().decode(Envelope.self, from: data)
+            env = try JSONDecoder().decode(Envelope<T>.self, from: data)
         } catch {
             throw StashAPIError.decoding(error.localizedDescription)
         }

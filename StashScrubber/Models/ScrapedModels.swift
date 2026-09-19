@@ -60,6 +60,7 @@ struct ScrapedPerformer: Codable, Hashable {
         case country, ethnicity, measurements, urls
         case storedId = "stored_id"
         case imagePath = "image_path"
+        case careerLength = "career_length"
         case tags
     }
 }
