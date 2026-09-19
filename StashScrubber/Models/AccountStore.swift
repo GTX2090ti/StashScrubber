@@ -89,6 +89,17 @@ final class AccountStore: ObservableObject {
         currentUser = name
     }
 
+    /// 登录：账号已存在则校验密码；不存在则自动创建（App 无独立注册功能，首次登录即设置账号）
+    func loginOrRegister(username: String, password: String) throws {
+        let name = username.trimmingCharacters(in: .whitespaces)
+        if Self.loadAccounts()[name] != nil {
+            try login(username: name, password: password)
+        } else {
+            try register(username: name, password: password)
+            try login(username: name, password: password)
+        }
+    }
+
     func logout() {
         UserDefaults.standard.removeObject(forKey: Self.sessionKey)
         currentUser = nil

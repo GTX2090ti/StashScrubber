@@ -185,6 +185,14 @@ final class AppSettings: ObservableObject {
         if let apiKey { profiles[idx].apiKey = apiKey }
     }
 
+    /// 首次登录初始化：用登录页填写的内外网地址重建档案（内网默认激活，API Key 两档案通用）
+    func applyFirstSetup(lanURL: String, wanURL: String, apiKey: String) {
+        let lan = ServerProfile(name: "内网", url: lanURL, apiKey: apiKey)
+        let wan = ServerProfile(name: "外网", url: wanURL, apiKey: apiKey)
+        profiles = [lan, wan]
+        activeProfileID = lan.id
+    }
+
     func addProfile(_ p: ServerProfile) {
         profiles.append(p)
         activeProfileID = p.id
@@ -339,7 +347,7 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.2.0")
+                    LabeledContent("版本", value: "1.2.1")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }
