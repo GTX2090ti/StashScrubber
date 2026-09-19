@@ -3,27 +3,30 @@ import Foundation
 // MARK: - 削刮目标类型
 
 enum ScrapeKind: Hashable {
-    case scene, image, performer
+    case scene, studio, performer
 
     var title: String {
         switch self {
         case .scene: return "场景"
-        case .image: return "图片"
+        case .studio: return "工作室"
         case .performer: return "演员"
         }
     }
 }
 
-// MARK: - 刮削结果实体（对应 Stash ScrapedScene / ScrapedImage / ScrapedPerformer）
+// MARK: - 刮削结果实体（对应 Stash ScrapedScene / ScrapedStudio / ScrapedPerformer）
 
 struct ScrapedStudio: Codable, Hashable {
     let id: String?
     let storedId: String?
     let name: String?
     let imagePath: String?
+    let details: String?
+    let urls: [String]?
+    let tags: [ScrapedTag]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case id, name, details, urls, tags
         case storedId = "stored_id"
         case imagePath = "image_path"
     }
@@ -78,30 +81,19 @@ struct ScrapedScene: Codable, Hashable {
     let tags: [ScrapedTag]?
 }
 
-struct ScrapedImage: Codable, Hashable {
-    let id: String?
-    let title: String?
-    let date: String?
-    let urls: [String]?
-    let image: String?
-    let studio: ScrapedStudio?
-    let performers: [ScrapedPerformer]?
-    let tags: [ScrapedTag]?
-}
-
 // MARK: - 统一削刮结果包装（供通用削刮界面使用）
 
 enum ScrapedItem: Hashable, Identifiable {
     case scene(ScrapedScene)
-    case image(ScrapedImage)
+    case studio(ScrapedStudio)
     case performer(ScrapedPerformer)
 
     var id: String {
         switch self {
         case .scene(let s):
             return "scene:" + (s.title ?? "") + "|" + (s.date ?? "") + "|" + (s.studio?.name ?? "")
-        case .image(let i):
-            return "image:" + (i.title ?? "") + "|" + (i.date ?? "") + "|" + (i.studio?.name ?? "")
+        case .studio(let st):
+            return "studio:" + (st.name ?? "") + "|" + (st.urls?.first ?? "")
         case .performer(let p):
             return "perf:" + (p.name ?? "") + "|" + (p.birthdate ?? "")
         }
@@ -110,7 +102,7 @@ enum ScrapedItem: Hashable, Identifiable {
     var displayName: String {
         switch self {
         case .scene(let s): return s.title ?? "（无标题场景）"
-        case .image(let i): return i.title ?? "（无标题图片）"
+        case .studio(let st): return st.name ?? "（无名工作室）"
         case .performer(let p): return p.name ?? "（无名演员）"
         }
     }
@@ -120,8 +112,9 @@ enum ScrapedItem: Hashable, Identifiable {
         case .scene(let s):
             let parts = [s.studio?.name, s.date].compactMap { $0 }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
-        case .image(let i):
-            let parts = [i.studio?.name, i.date].compactMap { $0 }
+        case .studio(let st):
+            let parts = [st.urls?.first, st.details?.components(separatedBy: "\n").first]
+                .compactMap { $0 }.filter { !$0.isEmpty }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         case .performer(let p):
             let parts = [p.birthdate, p.country].compactMap { $0 }
@@ -137,7 +130,7 @@ enum ScrapedItem: Hashable, Identifiable {
         }
         switch self {
         case .scene(let s): return httpOnly(s.image)
-        case .image(let i): return httpOnly(i.image)
+        case .studio(let st): return st.imagePath
         case .performer(let p): return p.imagePath
         }
     }
@@ -168,16 +161,16 @@ struct ExistingMeta: Hashable {
         urls = scene.urls ?? []
     }
 
-    init(image: StashImage) {
-        title = image.title
-        details = nil
-        date = image.date
+    init(studio: Studio) {
+        title = studio.name
+        details = studio.details
+        date = nil
         birthdate = nil
         country = nil
-        studio = image.studio?.name
-        performers = image.performers?.map(\.name) ?? []
-        tags = image.tags?.map(\.name) ?? []
-        urls = []
+        studio = nil
+        performers = []
+        tags = studio.tags?.map(\.name) ?? []
+        urls = studio.url.map { [$0] } ?? []
     }
 
     init(performer: Performer) {

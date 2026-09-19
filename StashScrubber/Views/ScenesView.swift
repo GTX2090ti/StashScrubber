@@ -51,6 +51,7 @@ final class SceneListViewModel: ObservableObject {
 struct ScenesView: View {
     @StateObject private var vm = SceneListViewModel()
     @EnvironmentObject private var settings: AppSettings
+    @AppStorage("scenes.viewMode") private var viewMode: String = "grid"   // grid=一排3个 / list=列表
 
     var body: some View {
         NavigationStack {
@@ -64,6 +65,12 @@ struct ScenesView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            viewMode = (viewMode == "grid") ? "list" : "grid"
+                        } label: {
+                            Label(viewMode == "grid" ? "列表视图" : "网格视图",
+                                  systemImage: viewMode == "grid" ? "list.bullet" : "square.grid.2x2")
+                        }
                         Menu {
                             Picker("排序", selection: $vm.sort) {
                                 Text("日期").tag("date")
@@ -96,16 +103,30 @@ struct ScenesView: View {
             EmptyStateView(title: "没有场景", hint: "下拉刷新，或检查服务器与过滤条件")
         } else {
             ScrollView {
-                // 自适应网格：iPhone 2 列，iPad 随宽度 4~6 列
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 14) {
-                    ForEach(vm.scenes) { s in
-                        NavigationLink(value: s.id) {
-                            SceneCard(scene: s)
+                if viewMode == "grid" {
+                    // 紧凑网格：一排 3 个（iPhone），iPad 随宽度 5~7 列
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 14) {
+                        ForEach(vm.scenes) { s in
+                            NavigationLink(value: s.id) {
+                                SceneCard(scene: s)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal)
+                } else {
+                    // 列表模式：左图右文整行卡片
+                    LazyVStack(spacing: 0) {
+                        ForEach(vm.scenes) { s in
+                            NavigationLink(value: s.id) {
+                                SceneRow(scene: s)
+                            }
+                            .buttonStyle(.plain)
+                            Divider()
+                        }
+                    }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
 
                 if vm.canLoadMore {
                     Button {
@@ -152,6 +173,42 @@ struct SceneCard: View {
                 }
             }
         }
+    }
+}
+
+/// 列表模式整行卡片
+struct SceneRow: View {
+    let scene: Scene
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemoteImageView(urlString: scene.paths?.webp ?? scene.paths?.screenshot)
+                .frame(width: 120, height: 68)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(scene.title ?? "（无标题）")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    if let st = scene.studio {
+                        Text(st.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let d = scene.date {
+                        Text(d).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
     }
 }
 

@@ -9,7 +9,17 @@ struct Tag: Codable, Hashable, Identifiable {
 
 struct Studio: Codable, Hashable, Identifiable {
     let id: String
-    let name: String
+    var name: String
+    var url: String?
+    var details: String?
+    var imagePath: String?
+    var rating100: Int?
+    var tags: [Tag]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, url, details, rating100, tags
+        case imagePath = "image_path"
+    }
 }
 
 struct Performer: Codable, Hashable, Identifiable {
@@ -76,34 +86,19 @@ struct ScenePaths: Codable, Hashable {
     let webp: String?
 }
 
-struct StashImage: Codable, Hashable, Identifiable {
-    let id: String
-    var title: String?
-    var date: String?
-    var rating100: Int?
-    var studio: Studio?
-    var performers: [Performer]?
-    var tags: [Tag]?
-    var paths: ImagePaths?
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, date, rating100, studio, performers, tags, paths
-    }
-}
-
-struct ImagePaths: Codable, Hashable {
-    let image: String?
-    let thumbnail: String?
-}
-
 struct ScenePage: Codable {
     let count: Int
     let scenes: [Scene]
 }
 
-struct ImagePage: Codable {
+struct StudioPage: Codable {
     let count: Int
-    let images: [StashImage]
+    let studios: [Studio]
+}
+
+struct TagPage: Codable {
+    let count: Int
+    let tags: [Tag]
 }
 
 struct PerformerPage: Codable {
@@ -117,7 +112,7 @@ struct Scraper: Codable, Hashable, Identifiable {
     let id: String
     let name: String
     var scene: Capability?
-    var image: Capability?
+    var studio: Capability?
     var performer: Capability?
 
     struct Capability: Codable, Hashable {
@@ -130,7 +125,7 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsFragment: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("FRAGMENT") ?? false
-        case .image: return image?.supportedScrapes?.contains("FRAGMENT") ?? false
+        case .studio: return studio?.supportedScrapes?.contains("FRAGMENT") ?? false
         case .performer: return performer?.supportedScrapes?.contains("FRAGMENT") ?? false
         }
     }
@@ -138,7 +133,7 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsName: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("NAME") ?? false
-        case .image: return image?.supportedScrapes?.contains("NAME") ?? false
+        case .studio: return studio?.supportedScrapes?.contains("NAME") ?? false
         case .performer: return performer?.supportedScrapes?.contains("NAME") ?? false
         }
     }
@@ -161,13 +156,12 @@ struct SceneUpdateInput: Encodable {
     var urls: [String]?
 }
 
-struct ImageUpdateInput: Encodable {
+struct StudioUpdateInput: Encodable {
     var id: String
-    var title: String?
-    var date: String?
+    var name: String?
+    var url: String?
+    var details: String?
     var rating100: Int?
-    var studioId: String?
-    var performerIds: [String]?
     var tagIds: [String]?
 }
 

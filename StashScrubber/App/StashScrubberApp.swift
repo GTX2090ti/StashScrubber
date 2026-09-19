@@ -25,7 +25,7 @@ struct ServerProfile: Codable, Identifiable, Equatable {
 // MARK: - 根视图：iPhone 用 TabView，iPad 用双栏 SplitView（均为原生组件）
 
 enum AppSection: Hashable {
-    case scenes, images, performers, settings
+    case scenes, studios, performers, tags, settings
 }
 
 struct RootView: View {
@@ -48,9 +48,12 @@ struct TabRootView: View {
             ScenesView()
                 .tabItem { Label("场景", systemImage: "film") }
                 .tag(AppSection.scenes)
-            ImagesView()
-                .tabItem { Label("图片", systemImage: "photo.on.rectangle") }
-                .tag(AppSection.images)
+            StudiosView()
+                .tabItem { Label("工作室", systemImage: "building.2") }
+                .tag(AppSection.studios)
+            TagsView()
+                .tabItem { Label("标签", systemImage: "tag") }
+                .tag(AppSection.tags)
             PerformersView()
                 .tabItem { Label("演员", systemImage: "person.2") }
                 .tag(AppSection.performers)
@@ -70,8 +73,11 @@ struct SplitRootView: View {
                 NavigationLink(value: AppSection.scenes) {
                     Label("场景", systemImage: "film")
                 }
-                NavigationLink(value: AppSection.images) {
-                    Label("图片", systemImage: "photo.on.rectangle")
+                NavigationLink(value: AppSection.studios) {
+                    Label("工作室", systemImage: "building.2")
+                }
+                NavigationLink(value: AppSection.tags) {
+                    Label("标签", systemImage: "tag")
                 }
                 NavigationLink(value: AppSection.performers) {
                     Label("演员", systemImage: "person.2")
@@ -85,11 +91,12 @@ struct SplitRootView: View {
         } detail: {
             switch selection {
             case .scenes: ScenesView()
-            case .images: ImagesView()
+            case .studios: StudiosView()
             case .performers: PerformersView()
+            case .tags: TagsView()
             case .settings: SettingsView()
             case nil:
-                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 场景 / 图片 / 演员 / 设置")
+                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 场景 / 工作室 / 演员 / 标签 / 设置")
             }
         }
     }

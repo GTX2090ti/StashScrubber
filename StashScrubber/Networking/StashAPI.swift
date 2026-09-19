@@ -62,48 +62,114 @@ enum StashAPI {
         return s
     }
 
-    // MARK: 查询 - 图片
+    // MARK: 查询 - 工作室
 
-    static func findImages(
-        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 60
-    ) async throws -> ImagePage {
-        struct R: Decodable { let findImages: ImagePage }
+    static func findStudios(
+        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 40
+    ) async throws -> StudioPage {
+        struct R: Decodable { let findStudios: StudioPage }
         let q = """
-        query FindImages($filter: FindFilterType!) {
-          findImages(filter: $filter) {
+        query FindStudios($filter: FindFilterType!) {
+          findStudios(filter: $filter) {
             count
-            images {
-              id title date rating100
-              studio { id name }
-              performers { id name }
+            studios {
+              id name url details image_path rating100
               tags { id name }
-              paths { image thumbnail }
             }
           }
         }
         """
-        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "name", "direction": "ASC"]
         if !query.isEmpty { filter["q"] = query }
         let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
-        return r.findImages
+        return r.findStudios
     }
 
-    static func image(_ c: GraphQLClient, id: String) async throws -> StashImage {
-        struct R: Decodable { let findImage: StashImage? }
+    static func studio(_ c: GraphQLClient, id: String) async throws -> Studio {
+        struct R: Decodable { let findStudio: Studio? }
         let q = """
-        query FindImage($id: ID!) {
-          findImage(id: $id) {
-            id title date rating100
-            studio { id name }
-            performers { id name image_path }
+        query FindStudio($id: ID!) {
+          findStudio(id: $id) {
+            id name url details image_path rating100
             tags { id name }
-            paths { image thumbnail }
           }
         }
         """
         let r: R = try await c.send(q, variables: ["id": id], as: R.self)
-        guard let i = r.findImage else { throw StashAPIError.noData }
-        return i
+        guard let s = r.findStudio else { throw StashAPIError.noData }
+        return s
+    }
+
+    /// 某工作室下的场景（详情页「相关场景」）
+    static func findScenesByStudio(
+        _ c: GraphQLClient, studioId: String, page: Int = 1, perPage: Int = 24
+    ) async throws -> ScenePage {
+        struct R: Decodable { let findScenes: ScenePage }
+        let q = """
+        query FindScenesByStudio($filter: FindFilterType!, $sf: SceneFilterType!) {
+          findScenes(filter: $filter, scene_filter: $sf) {
+            count
+            scenes {
+              id title details date rating100 o_counter
+              urls
+              studio { id name }
+              performers { id name }
+              tags { id name }
+              paths { screenshot webp }
+            }
+          }
+        }
+        """
+        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        let sf: [String: Any] = ["studios": ["value": [studioId], "modifier": "INCLUDES"]]
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
+        return r.findScenes
+    }
+
+    // MARK: 查询 - 标签
+
+    static func findTags(
+        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 120
+    ) async throws -> TagPage {
+        struct R: Decodable { let findTags: TagPage }
+        let q = """
+        query FindTags($filter: FindFilterType!) {
+          findTags(filter: $filter) {
+            count
+            tags { id name }
+          }
+        }
+        """
+        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "name", "direction": "ASC"]
+        if !query.isEmpty { filter["q"] = query }
+        let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
+        return r.findTags
+    }
+
+    /// 带某标签的场景（标签详情页）
+    static func findScenesByTag(
+        _ c: GraphQLClient, tagId: String, page: Int = 1, perPage: Int = 24
+    ) async throws -> ScenePage {
+        struct R: Decodable { let findScenes: ScenePage }
+        let q = """
+        query FindScenesByTag($filter: FindFilterType!, $sf: SceneFilterType!) {
+          findScenes(filter: $filter, scene_filter: $sf) {
+            count
+            scenes {
+              id title details date rating100 o_counter
+              urls
+              studio { id name }
+              performers { id name }
+              tags { id name }
+              paths { screenshot webp }
+            }
+          }
+        }
+        """
+        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        let sf: [String: Any] = ["tags": ["value": [tagId], "modifier": "INCLUDES"]]
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
+        return r.findScenes
     }
 
     // MARK: 查询 - 演员
@@ -162,35 +228,29 @@ enum StashAPI {
         return try await c.send("query { allTags { id name } }", as: R.self).allTags
     }
 
-    // MARK: 刮削器列表
+    // MARK: 刮削器列表（统一 listScrapers(types:)，本套 Stash 无 listSceneScrapers 等拆分字段）
 
-    /// - Parameter kind: 目标类型，决定返回 listSceneScrapers / listImageScrapers / listPerformerScrapers
+    /// - Parameter kind: 目标类型，决定 ScraperType 取 SCENE / STUDIO / PERFORMER
     static func scrapers(_ c: GraphQLClient, kind: ScrapeKind) async throws -> [Scraper] {
-        let field: String
+        let typeName: String
         switch kind {
-        case .scene: field = "listSceneScrapers"
-        case .image: field = "listImageScrapers"
-        case .performer: field = "listPerformerScrapers"
+        case .scene: typeName = "SCENE"
+        case .studio: typeName = "STUDIO"
+        case .performer: typeName = "PERFORMER"
         }
-        struct R: Decodable { let scrapers: [Scraper] }
+        struct R: Decodable { let listScrapers: [Scraper] }
         let q = """
-        query ListScrapers {
-          \(field) {
+        query ListScrapers($types: [ScraperType!]!) {
+          listScrapers(types: $types) {
             id name
             scene { supported_scrapes }
-            image { supported_scrapes }
+            studio { supported_scrapes }
             performer { supported_scrapes }
           }
         }
         """
-        // 字段名动态，用中间键解码
-        struct Raw: Decodable {
-            let listSceneScrapers: [Scraper]?
-            let listImageScrapers: [Scraper]?
-            let listPerformerScrapers: [Scraper]?
-        }
-        let raw: Raw = try await c.send(q, as: Raw.self)
-        return raw.listSceneScrapers ?? raw.listImageScrapers ?? raw.listPerformerScrapers ?? []
+        let r: R = try await c.send(q, variables: ["types": [typeName]], as: R.self)
+        return r.listScrapers
     }
 
     // MARK: 削刮 - 场景
@@ -253,35 +313,50 @@ enum StashAPI {
         return r.queryScrapeSceneQuery.compactMap { $0 }
     }
 
-    // MARK: 削刮 - 图片
+    // MARK: 削刮 - 工作室
 
-    static func scrapeImageFragment(_ c: GraphQLClient, scraperId: String, imageId: String) async throws -> [ScrapedImage] {
-        struct R: Decodable { let scrapeSingleImage: [ScrapedImage?] }
+    /// 片段削刮：以现有工作室信息为上下文，用指定刮削器削刮
+    static func scrapeStudioFragment(_ c: GraphQLClient, scraperId: String, studioId: String) async throws -> [ScrapedStudio] {
+        struct R: Decodable { let scrapeSingleStudio: [ScrapedStudio?] }
         let q = """
-        mutation ScrapeSingleImage($source: ScraperSourceInput!, $input: ScrapeSingleImageInput!) {
-          scrapeSingleImage(source: $source, input: $input) {
-            id title date urls image
-            studio { id stored_id name }
-            performers { id stored_id name disambiguation image_path }
+        mutation ScrapeSingleStudio($source: ScraperSourceInput!, $input: ScrapeSingleStudioInput!) {
+          scrapeSingleStudio(source: $source, input: $input) {
+            id stored_id name image_path details urls
             tags { id stored_id name }
           }
         }
         """
         let r: R = try await c.send(q, variables: [
             "source": ["source_type": "SCRAPER", "id": scraperId],
-            "input": ["image_id": imageId]
+            "input": ["studio_id": studioId]
         ], as: R.self)
-        return r.scrapeSingleImage.compactMap { $0 }
+        return r.scrapeSingleStudio.compactMap { $0 }
     }
 
-    static func scrapeImageQuery(_ c: GraphQLClient, query: String) async throws -> [ScrapedImage] {
-        struct R: Decodable { let queryScrapeImageQuery: [ScrapedImage?] }
+    /// 工作室 URL 削刮（与场景相同模式：source 指向 URL，input 留空）
+    static func scrapeStudioURL(_ c: GraphQLClient, url: String) async throws -> [ScrapedStudio] {
+        struct R: Decodable { let scrapeSingleStudio: [ScrapedStudio?] }
         let q = """
-        query ScrapeImageQuery($filter: FindFilterType!, $query: String!) {
-          queryScrapeImageQuery(filter: $filter, query: $query) {
-            id title date urls image
-            studio { id stored_id name }
-            performers { id stored_id name disambiguation image_path }
+        mutation ScrapeStudioURL($source: ScraperSourceInput!) {
+          scrapeSingleStudio(source: $source, input: {}) {
+            id stored_id name image_path details urls
+            tags { id stored_id name }
+          }
+        }
+        """
+        let r: R = try await c.send(q, variables: [
+            "source": ["source_type": "URL", "url": url]
+        ], as: R.self)
+        return r.scrapeSingleStudio.compactMap { $0 }
+    }
+
+    /// 工作室关键词搜索削刮
+    static func scrapeStudioQuery(_ c: GraphQLClient, query: String) async throws -> [ScrapedStudio] {
+        struct R: Decodable { let queryScrapeStudioQuery: [ScrapedStudio?] }
+        let q = """
+        query ScrapeStudioQuery($filter: FindFilterType!, $query: String!) {
+          queryScrapeStudioQuery(filter: $filter, query: $query) {
+            id stored_id name image_path details urls
             tags { id stored_id name }
           }
         }
@@ -289,7 +364,7 @@ enum StashAPI {
         let r: R = try await c.send(q, variables: [
             "filter": ["q": query], "query": query
         ], as: R.self)
-        return r.queryScrapeImageQuery.compactMap { $0 }
+        return r.queryScrapeStudioQuery.compactMap { $0 }
     }
 
     // MARK: 削刮 - 演员
@@ -359,16 +434,16 @@ enum StashAPI {
         if r.sceneUpdate == nil { throw StashAPIError.noData }
     }
 
-    static func updateImage(_ c: GraphQLClient, input: ImageUpdateInput) async throws {
-        struct R: Decodable { let imageUpdate: IDOnly? }
+    static func updateStudio(_ c: GraphQLClient, input: StudioUpdateInput) async throws {
+        struct R: Decodable { let studioUpdate: IDOnly? }
         struct IDOnly: Decodable { let id: String }
         let q = """
-        mutation UpdateImage($input: ImageUpdateInput!) {
-          imageUpdate(input: $input) { id }
+        mutation UpdateStudio($input: StudioUpdateInput!) {
+          studioUpdate(input: $input) { id }
         }
         """
         let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
-        if r.imageUpdate == nil { throw StashAPIError.noData }
+        if r.studioUpdate == nil { throw StashAPIError.noData }
     }
 
     static func updatePerformer(_ c: GraphQLClient, input: PerformerUpdateInput) async throws {
@@ -462,22 +537,19 @@ enum StashAPI {
             if let us = s.urls, !us.isEmpty { input.urls = us; changed += 1 }
             if changed > 0 { try await updateScene(c, input: input) }
 
-        case .image(let i):
-            var input = ImageUpdateInput(id: targetID)
-            if let v = i.title, !v.isEmpty { input.title = v; changed += 1 }
-            if let v = i.date, !v.isEmpty { input.date = v; changed += 1 }
-            if let st = i.studio, let sid = try await resolveStudioID(st) { input.studioId = sid; changed += 1 }
-            if let ps = i.performers {
-                var ids: [String] = []
-                for p in ps { if let pid = try await resolvePerformerID(p) { ids.append(pid) } }
-                if !ids.isEmpty { input.performerIds = ids; changed += 1 }
+        case .studio(let st):
+            var input = StudioUpdateInput(id: targetID)
+            if let v = st.name, !v.isEmpty { input.name = v; changed += 1 }
+            if let v = st.details, !v.isEmpty { input.details = v; changed += 1 }
+            if let u = st.urls?.compactMap({ $0 }).first(where: { !$0.isEmpty }) {
+                input.url = u; changed += 1
             }
-            if let ts = i.tags {
+            if let ts = st.tags {
                 var ids: [String] = []
                 for t in ts { if let tid = try await resolveTagID(t) { ids.append(tid) } }
                 if !ids.isEmpty { input.tagIds = ids; changed += 1 }
             }
-            if changed > 0 { try await updateImage(c, input: input) }
+            if changed > 0 { try await updateStudio(c, input: input) }
 
         case .performer(let p):
             var input = PerformerUpdateInput(id: targetID)

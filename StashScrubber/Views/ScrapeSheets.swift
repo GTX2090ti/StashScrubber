@@ -209,9 +209,9 @@ struct ScrapeSheet: View {
             case .scene:
                 return try await StashAPI.scrapeSceneFragment(client, scraperId: sc.id, sceneId: targetID)
                     .map { ScrapedItem.scene($0) }
-            case .image:
-                return try await StashAPI.scrapeImageFragment(client, scraperId: sc.id, imageId: targetID)
-                    .map { ScrapedItem.image($0) }
+            case .studio:
+                return try await StashAPI.scrapeStudioFragment(client, scraperId: sc.id, studioId: targetID)
+                    .map { ScrapedItem.studio($0) }
             case .performer:
                 return try await StashAPI.scrapePerformerFragment(client, scraperId: sc.id, performerId: targetID)
                     .map { ScrapedItem.performer($0) }
@@ -224,8 +224,8 @@ struct ScrapeSheet: View {
             switch kind {
             case .scene:
                 return try await StashAPI.scrapeSceneURL(client, url: urlText).map { ScrapedItem.scene($0) }
-            case .image:
-                throw StashAPIError.server(["图片暂不支持 URL 削刮，请使用片段削刮或关键词削刮方式"])
+            case .studio:
+                return try await StashAPI.scrapeStudioURL(client, url: urlText).map { ScrapedItem.studio($0) }
             case .performer:
                 return try await StashAPI.scrapePerformerURL(client, url: urlText).map { ScrapedItem.performer($0) }
             }
@@ -237,8 +237,8 @@ struct ScrapeSheet: View {
             switch kind {
             case .scene:
                 return try await StashAPI.scrapeSceneQuery(client, query: queryText).map { ScrapedItem.scene($0) }
-            case .image:
-                return try await StashAPI.scrapeImageQuery(client, query: queryText).map { ScrapedItem.image($0) }
+            case .studio:
+                return try await StashAPI.scrapeStudioQuery(client, query: queryText).map { ScrapedItem.studio($0) }
             case .performer:
                 return try await StashAPI.scrapePerformerQuery(client, query: queryText).map { ScrapedItem.performer($0) }
             }
@@ -277,15 +277,14 @@ struct ScrapePreview: View {
                 }),
                 ("URL", existing.urls.joined(separator: " "), s.urls?.joined(separator: " ")),
             ]
-        case .image(let i):
+        case .studio(let st):
             return [
-                ("标题", existing.title, i.title),
-                ("日期", existing.date, i.date),
-                ("工作室", existing.studio, i.studio?.name),
-                ("演员", join(existing.performers), i.performers.flatMap { ps in
-                    ps.compactMap(\.name).isEmpty ? nil : ps.compactMap(\.name).joined(separator: "、")
+                ("名称", existing.title, st.name),
+                ("简介", existing.details, st.details),
+                ("URL", existing.urls.joined(separator: " "), st.urls.flatMap { us in
+                    us.filter { !$0.isEmpty }.isEmpty ? nil : us.filter { !$0.isEmpty }.joined(separator: " ")
                 }),
-                ("标签", join(existing.tags), i.tags.flatMap { ts in
+                ("标签", join(existing.tags), st.tags.flatMap { ts in
                     ts.compactMap(\.name).isEmpty ? nil : ts.compactMap(\.name).joined(separator: "、")
                 }),
             ]
