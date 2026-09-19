@@ -26,7 +26,7 @@ enum StashAPI {
             count
             scenes {
               id title details date rating100 o_counter
-              urls { url }
+              urls
               studio { id name }
               performers { id name }
               tags { id name }
@@ -49,7 +49,7 @@ enum StashAPI {
         query FindScene($id: ID!) {
           findScene(id: $id) {
             id title details date rating100 o_counter
-            urls { url }
+            urls
             studio { id name }
             performers { id name image_path birthdate details }
             tags { id name }

@@ -48,10 +48,6 @@ struct Scene: Codable, Hashable, Identifiable {
     var tags: [Tag]?
     var paths: ScenePaths?
 
-    struct SceneURL: Codable {
-        let url: String?
-    }
-
     enum CodingKeys: String, CodingKey {
         case id, title, details, date, rating100, urls
         case oCounter = "o_counter"
@@ -70,14 +66,8 @@ struct Scene: Codable, Hashable, Identifiable {
         performers = try c.decodeIfPresent([Performer].self, forKey: .performers)
         tags = try c.decodeIfPresent([Tag].self, forKey: .tags)
         paths = try c.decodeIfPresent(ScenePaths.self, forKey: .paths)
-        // Stash v0.27+ urls 为 [{url}] 对象数组，旧版为 [String]，两者兼容
-        if let objs = try? c.decodeIfPresent([SceneURL].self, forKey: .urls) {
-            urls = objs.map { $0.url ?? "" }.filter { !$0.isEmpty }
-        } else if let strs = try? c.decodeIfPresent([String].self, forKey: .urls) {
-            urls = strs
-        } else {
-            urls = nil
-        }
+        // 该 Stash 实测 urls 为 [String] 纯字符串数组
+        urls = try c.decodeIfPresent([String].self, forKey: .urls)
     }
 }
 
