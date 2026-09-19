@@ -112,7 +112,6 @@ struct Scraper: Codable, Hashable, Identifiable {
     let id: String
     let name: String
     var scene: Capability?
-    var studio: Capability?
     var performer: Capability?
 
     struct Capability: Codable, Hashable {
@@ -125,7 +124,7 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsFragment: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("FRAGMENT") ?? false
-        case .studio: return studio?.supportedScrapes?.contains("FRAGMENT") ?? false
+        case .studio: return false
         case .performer: return performer?.supportedScrapes?.contains("FRAGMENT") ?? false
         }
     }
@@ -133,13 +132,21 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsName: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("NAME") ?? false
-        case .studio: return studio?.supportedScrapes?.contains("NAME") ?? false
+        case .studio: return false
         case .performer: return performer?.supportedScrapes?.contains("NAME") ?? false
         }
     }
 
     /// 查询时临时记录当前目标类型，供 supports* 使用（由 API 层设置）
     static var kindContext: ScrapeKind = .scene
+}
+
+// MARK: - Stash-box 端点（顺序即 stash_box_index）
+
+struct StashBoxInfo: Codable, Hashable, Identifiable {
+    let name: String?
+    let endpoint: String
+    var id: String { endpoint }
 }
 
 // MARK: - 元数据更新输入

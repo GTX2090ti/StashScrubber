@@ -2,17 +2,22 @@ import SwiftUI
 
 // MARK: - 通用削刮面板：三种削刮方式 × 三种目标类型，复用一套 UI
 //
+// 真机 schema 实测（2026-09-19）：
+//  - listScrapers(types: [ScrapeContentType!])，枚举无 STUDIO → 工作室削刮仅支持 stash-box 源
+//  - scrapeSingleScene/Studio/Performer 位于 Query 根，源 = 本地刮削器（scraper_id）或 Stash-box（stash_box_index）
+//  - queryScrape*Query 关键词削刮不存在 → 「名称削刮」统一走 scrapeSingle*（input.query）
+//
 // 方式：
-//  1) 片段削刮 —— 选择服务端刮削器，以当前条目的现有信息为上下文削刮
-//  2) URL 削刮 —— 粘贴详情页 URL，由匹配的刮削器削刮
-//  3) 关键词削刮 —— 输入名称，跨刮削器搜索候选
+//  1) 片段削刮 —— 本地刮削器以当前条目的现有信息为上下文削刮
+//  2) 名称削刮 —— 输入名称，经 Stash-box / 支持名称削刮的本地刮削器搜索
+//  3) URL 削刮 —— 粘贴详情页 URL，由匹配的刮削器削刮
 // 结果进入预览页比对后确认写回。
 
 struct ScrapeSheet: View {
-    enum Mode: String, CaseIterable, Identifiable {
+    enum Mode: String, Identifiable {
         case fragment = "片段削刮"
+        case query = "名称削刮"
         case url = "URL 削刮"
-        case query = "关键词削刮"
         var id: String { rawValue }
     }
 
@@ -25,7 +30,8 @@ struct ScrapeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var mode: Mode = .fragment
-    @State private var scrapers: [Scraper] = []
+    @State private var localScrapers: [Scraper] = []
+    @State private var boxes: [StashBoxInfo] = []
     @State private var urlText = ""
     @State private var queryText = ""
     @State private var results: [ScrapedItem] = []
@@ -34,22 +40,80 @@ struct ScrapeSheet: View {
     @State private var picked: ScrapedItem?
     @State private var didApply = false
 
+    /// 本套 Stash：工作室削刮仅支持 stash-box 按名称，无片段/URL 方式
+    private var availableModes: [Mode] {
+        switch kind {
+        case .scene, .performer: return [.fragment, .query, .url]
+        case .studio: return [.query]
+        }
+    }
+
+    /// 削刮源（本地刮削器 / stash-box），dict 直接作为 ScraperSourceInput
+    private struct Source: Identifiable {
+        let id: String
+        let name: String
+        let dict: [String: Any]
+    }
+
+    private var fragmentSources: [Source] {
+        localScrapers.filter { $0.supportsFragment }.map {
+            Source(id: "sc-\($0.id)", name: $0.name, dict: ["scraper_id": $0.id])
+        }
+    }
+
+    private var querySources: [Source] {
+        var s = boxes.enumerated().map { i, b in
+            Source(id: "box-\(i)", name: (b.name ?? "Stash-box") + "（Stash-box）",
+                   dict: ["stash_box_index": i])
+        }
+        if kind != .studio {
+            s += localScrapers.filter { $0.supportsName }.map {
+                Source(id: "sc-\($0.id)", name: $0.name, dict: ["scraper_id": $0.id])
+            }
+        }
+        return s
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Picker("方式", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                if availableModes.count > 1 {
+                    Section {
+                        Picker("方式", selection: $mode) {
+                            ForEach(availableModes) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: mode) { _ in results = [] }
+                    } header: {
+                        Text("削刮\(kind.title)")
                     }
-                    .pickerStyle(.segmented)
-                    .onChange(of: mode) { _ in results = [] }
-                } header: {
-                    Text("削刮\(kind.title)")
                 }
 
                 switch mode {
                 case .fragment:
-                    scraperSection
+                    sourceSection(
+                        fragmentSources,
+                        header: "选择刮削器（按当前信息削刮）",
+                        emptyText: fragmentSources.isEmpty ? "服务端未返回支持片段削刮的本地刮削器" : nil,
+                        footer: "以当前条目的已有字段作为片段上下文发给刮削器。",
+                        needsQueryText: false
+                    ) { src in
+                        Task { await scrapeFragment(with: src) }
+                    }
+
+                case .query:
+                    Section {
+                        TextField("输入\(kind.title)名称关键词", text: $queryText)
+                    }
+                    sourceSection(
+                        querySources,
+                        header: "选择削刮源（按名称搜索）",
+                        emptyText: querySources.isEmpty ? "未找到可用削刮源（无 Stash-box 且无本地刮削器）" : nil,
+                        footer: "Stash-box（StashDB / ThePornDB 等）按名称全局搜索；本地刮削器需声明支持名称削刮。",
+                        needsQueryText: true
+                    ) { src in
+                        Task { await scrapeQuery(with: src) }
+                    }
 
                 case .url:
                     Section {
@@ -65,20 +129,6 @@ struct ScrapeSheet: View {
                         .disabled(urlText.isEmpty || loading)
                     } footer: {
                         Text("需要刮削器支持 URL 类型削刮。")
-                    }
-
-                case .query:
-                    Section {
-                        TextField("输入\(kind.title)名称关键词", text: $queryText)
-                            .onSubmit { Task { await scrapeQuery() } }
-                        Button {
-                            Task { await scrapeQuery() }
-                        } label: {
-                            Label("搜索削刮", systemImage: "magnifyingglass")
-                        }
-                        .disabled(queryText.isEmpty || loading)
-                    } footer: {
-                        Text("将对支持名称削刮的刮削器发起搜索。")
                     }
                 }
 
@@ -127,7 +177,8 @@ struct ScrapeSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
-            .task { await loadScrapers() }
+            .onAppear { mode = availableModes.contains(mode) ? mode : availableModes[0] }
+            .task { await loadSources() }
             .errorAlert($error)
             .sheet(item: $picked) { item in
                 ScrapePreview(
@@ -144,19 +195,26 @@ struct ScrapeSheet: View {
         }
     }
 
-    private var scraperSection: some View {
+    private func sourceSection(
+        _ sources: [Source],
+        header: String,
+        emptyText: String?,
+        footer: String,
+        needsQueryText: Bool,
+        action: @escaping (Source) -> Void
+    ) -> some View {
         Section {
-            if scrapers.isEmpty && !loading {
-                Text("服务端未返回支持片段削刮的刮削器")
+            if let emptyText, !loading {
+                Text(emptyText)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(scrapers.filter { $0.supportsFragment }) { sc in
+            ForEach(sources) { src in
                 Button {
-                    Task { await scrapeFragment(with: sc) }
+                    action(src)
                 } label: {
                     HStack {
-                        Text(sc.name)
+                        Text(src.name)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         Spacer()
@@ -165,24 +223,25 @@ struct ScrapeSheet: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
-                .disabled(loading)
+                .disabled(loading || (needsQueryText && queryText.isEmpty))
             }
         } header: {
-            Text("选择刮削器（按当前信息削刮）")
+            Text(header)
         } footer: {
-            Text("以当前条目的已有字段作为片段上下文发给刮削器。")
+            Text(footer)
         }
     }
 
-    private func loadScrapers() async {
-        guard scrapers.isEmpty else { return }
+    private func loadSources() async {
+        guard localScrapers.isEmpty && boxes.isEmpty else { return }
         do {
             let client = try settings.makeClient()
             Scraper.kindContext = kind
-            scrapers = try await StashAPI.scrapers(client, kind: kind)
+            localScrapers = (try? await StashAPI.scrapers(client, kind: kind)) ?? []
+            boxes = (try? await StashAPI.stashBoxes(client)) ?? []
         } catch {
-            // 刮削器列表加载失败不阻塞 URL / 关键词方式
-            self.error = "刮削器列表加载失败：\(error.localizedDescription)"
+            // 源加载失败不阻塞 URL 方式
+            self.error = "削刮源加载失败：\(error.localizedDescription)"
         }
     }
 
@@ -196,24 +255,39 @@ struct ScrapeSheet: View {
             let items = try await body(client)
             results = items
             if items.isEmpty {
-                error = "没有削刮到结果。请确认服务端刮削器可用（查看 Stash 日志）。"
+                error = "没有削刮到结果。可换一个削刮源重试，或确认服务端刮削器可用（查看 Stash 日志）。"
             }
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func scrapeFragment(with sc: Scraper) async {
+    private func scrapeFragment(with src: Source) async {
         await run { client in
             switch kind {
             case .scene:
-                return try await StashAPI.scrapeSceneFragment(client, scraperId: sc.id, sceneId: targetID)
+                return try await StashAPI.scrapeSceneFragment(client, source: src.dict, sceneId: targetID)
                     .map { ScrapedItem.scene($0) }
             case .studio:
-                return try await StashAPI.scrapeStudioFragment(client, scraperId: sc.id, studioId: targetID)
+                return []   // 本套 Stash 工作室无片段削刮
+            case .performer:
+                return try await StashAPI.scrapePerformerFragment(client, source: src.dict, performerId: targetID)
+                    .map { ScrapedItem.performer($0) }
+            }
+        }
+    }
+
+    private func scrapeQuery(with src: Source) async {
+        await run { client in
+            switch kind {
+            case .scene:
+                return try await StashAPI.scrapeSceneByName(client, source: src.dict, query: queryText)
+                    .map { ScrapedItem.scene($0) }
+            case .studio:
+                return try await StashAPI.scrapeStudio(client, source: src.dict, query: queryText)
                     .map { ScrapedItem.studio($0) }
             case .performer:
-                return try await StashAPI.scrapePerformerFragment(client, scraperId: sc.id, performerId: targetID)
+                return try await StashAPI.scrapePerformerByName(client, source: src.dict, query: queryText)
                     .map { ScrapedItem.performer($0) }
             }
         }
@@ -225,22 +299,9 @@ struct ScrapeSheet: View {
             case .scene:
                 return try await StashAPI.scrapeSceneURL(client, url: urlText).map { ScrapedItem.scene($0) }
             case .studio:
-                return try await StashAPI.scrapeStudioURL(client, url: urlText).map { ScrapedItem.studio($0) }
+                return []   // 本套 Stash 工作室无 URL 削刮
             case .performer:
                 return try await StashAPI.scrapePerformerURL(client, url: urlText).map { ScrapedItem.performer($0) }
-            }
-        }
-    }
-
-    private func scrapeQuery() async {
-        await run { client in
-            switch kind {
-            case .scene:
-                return try await StashAPI.scrapeSceneQuery(client, query: queryText).map { ScrapedItem.scene($0) }
-            case .studio:
-                return try await StashAPI.scrapeStudioQuery(client, query: queryText).map { ScrapedItem.studio($0) }
-            case .performer:
-                return try await StashAPI.scrapePerformerQuery(client, query: queryText).map { ScrapedItem.performer($0) }
             }
         }
     }
@@ -281,6 +342,7 @@ struct ScrapePreview: View {
             return [
                 ("名称", existing.title, st.name),
                 ("简介", existing.details, st.details),
+                ("别名", nil, st.aliases),
                 ("URL", existing.urls.joined(separator: " "), st.urls.flatMap { us in
                     us.filter { !$0.isEmpty }.isEmpty ? nil : us.filter { !$0.isEmpty }.joined(separator: " ")
                 }),
@@ -289,6 +351,8 @@ struct ScrapePreview: View {
                 }),
             ]
         case .performer(let p):
+            let career = [p.careerStart, p.careerEnd].compactMap { $0 }
+                .joined(separator: " - ")
             return [
                 ("名称", existing.title, p.name),
                 ("区别名", nil, p.disambiguation),
@@ -296,7 +360,7 @@ struct ScrapePreview: View {
                 ("国籍", existing.country, p.country),
                 ("族裔", nil, p.ethnicity),
                 ("三围", nil, p.measurements),
-                ("从业年限", nil, p.careerLength),
+                ("从业年限", nil, career.isEmpty ? nil : career),
                 ("简介", existing.details, p.details),
                 ("标签", join(existing.tags), p.tags.flatMap { ts in
                     ts.compactMap(\.name).isEmpty ? nil : ts.compactMap(\.name).joined(separator: "、")

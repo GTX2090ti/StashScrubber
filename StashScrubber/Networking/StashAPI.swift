@@ -228,23 +228,27 @@ enum StashAPI {
         return try await c.send("query { allTags { id name } }", as: R.self).allTags
     }
 
-    // MARK: 刮削器列表（统一 listScrapers(types:)，本套 Stash 无 listSceneScrapers 等拆分字段）
+    // MARK: 刮削器与削刮源
+    //
+    // 真机 schema 实测（2026-09-19）：
+    // - listScrapers(types: [ScrapeContentType!]!)，枚举无 STUDIO → 工作室削刮仅走 stash-box 源
+    // - scrapeSingleScene/Studio/Performer 位于 Query 根（非 Mutation），返回数组
+    // - ScraperSourceInput 字段：scraper_id / stash_box_index / stash_box_endpoint
+    // - ScrapedScene/Performer/Tag/Studio 均无 id 字段（仅 stored_id）
 
-    /// - Parameter kind: 目标类型，决定 ScraperType 取 SCENE / STUDIO / PERFORMER
+    /// - Parameter kind: 目标类型，决定 ScrapeContentType 取 SCENE / PERFORMER
     static func scrapers(_ c: GraphQLClient, kind: ScrapeKind) async throws -> [Scraper] {
         let typeName: String
         switch kind {
-        case .scene: typeName = "SCENE"
-        case .studio: typeName = "STUDIO"
+        case .scene, .studio: typeName = "SCENE"
         case .performer: typeName = "PERFORMER"
         }
         struct R: Decodable { let listScrapers: [Scraper] }
         let q = """
-        query ListScrapers($types: [ScraperType!]!) {
+        query ListScrapers($types: [ScrapeContentType!]!) {
           listScrapers(types: $types) {
             id name
             scene { supported_scrapes }
-            studio { supported_scrapes }
             performer { supported_scrapes }
           }
         }
@@ -253,171 +257,134 @@ enum StashAPI {
         return r.listScrapers
     }
 
+    /// 服务端已配置的 Stash-box 端点（数组顺序即 stash_box_index）
+    static func stashBoxes(_ c: GraphQLClient) async throws -> [StashBoxInfo] {
+        struct R: Decodable {
+            struct Conf: Decodable { let general: General? }
+            struct General: Decodable { let stashBoxes: [StashBoxInfo]? }
+            let configuration: Conf
+        }
+        let r: R = try await c.send(
+            "query { configuration { general { stashBoxes { name endpoint } } } }", as: R.self)
+        return r.configuration.general?.stashBoxes ?? []
+    }
+
+    // MARK: 削刮选择集（与服务端 schema 逐字段核对过，勿加 id / image_path / career_length）
+
+    private static let scrapedStudioSelection = """
+    stored_id name urls image details aliases
+    tags { stored_id name }
+    """
+
+    private static let scrapedSceneSelection = """
+    title details date duration urls image
+    studio { stored_id name urls image }
+    performers { stored_id name disambiguation birthdate details country ethnicity measurements urls
+      tags { stored_id name } }
+    tags { stored_id name }
+    """
+
+    private static let scrapedPerformerSelection = """
+    stored_id name disambiguation birthdate details country ethnicity measurements
+    career_start career_end urls
+    tags { stored_id name }
+    """
+
     // MARK: 削刮 - 场景
 
-    /// 片段削刮：以现有场景信息为上下文，用指定刮削器削刮
-    static func scrapeSceneFragment(_ c: GraphQLClient, scraperId: String, sceneId: String) async throws -> [ScrapedScene] {
+    /// 片段削刮（source = ["scraper_id": ...] 或 ["stash_box_index": Int]）
+    static func scrapeSceneFragment(_ c: GraphQLClient, source: [String: Any], sceneId: String) async throws -> [ScrapedScene] {
         struct R: Decodable { let scrapeSingleScene: [ScrapedScene?] }
         let q = """
-        mutation ScrapeSingleScene($source: ScraperSourceInput!, $input: ScrapeSingleSceneInput!) {
-          scrapeSingleScene(source: $source, input: $input) {
-            id title details date duration urls image
-            studio { id stored_id name image_path }
-            performers { id stored_id name disambiguation birthdate details country image_path tags { id stored_id name } }
-            tags { id stored_id name }
-          }
+        query ScrapeSingleScene($source: ScraperSourceInput!, $input: ScrapeSingleSceneInput!) {
+          scrapeSingleScene(source: $source, input: $input) { \(scrapedSceneSelection) }
         }
         """
         let r: R = try await c.send(q, variables: [
-            "source": ["source_type": "SCRAPER", "id": scraperId],
-            "input": ["scene_id": sceneId]
+            "source": source, "input": ["scene_id": sceneId]
         ], as: R.self)
         return r.scrapeSingleScene.compactMap { $0 }
     }
 
-    /// URL 削刮
+    /// 按名称/关键词削刮
+    static func scrapeSceneByName(_ c: GraphQLClient, source: [String: Any], query: String) async throws -> [ScrapedScene] {
+        struct R: Decodable { let scrapeSingleScene: [ScrapedScene?] }
+        let q = """
+        query ScrapeSingleScene($source: ScraperSourceInput!, $input: ScrapeSingleSceneInput!) {
+          scrapeSingleScene(source: $source, input: $input) { \(scrapedSceneSelection) }
+        }
+        """
+        let r: R = try await c.send(q, variables: [
+            "source": source, "input": ["query": query]
+        ], as: R.self)
+        return r.scrapeSingleScene.compactMap { $0 }
+    }
+
+    /// URL 削刮（服务端返回单个对象，包装为数组）
     static func scrapeSceneURL(_ c: GraphQLClient, url: String) async throws -> [ScrapedScene] {
-        struct R: Decodable { let scrapeSingleScene: [ScrapedScene?] }
+        struct R: Decodable { let scrapeSceneURL: ScrapedScene? }
         let q = """
-        mutation ScrapeSceneURL($source: ScraperSourceInput!) {
-          scrapeSingleScene(source: $source, input: {}) {
-            id title details date duration urls image
-            studio { id stored_id name image_path }
-            performers { id stored_id name disambiguation birthdate details country image_path tags { id stored_id name } }
-            tags { id stored_id name }
-          }
+        query ScrapeSceneURL($url: String!) {
+          scrapeSceneURL(url: $url) { \(scrapedSceneSelection) }
         }
         """
-        let r: R = try await c.send(q, variables: [
-            "source": ["source_type": "URL", "url": url]
-        ], as: R.self)
-        return r.scrapeSingleScene.compactMap { $0 }
+        let r: R = try await c.send(q, variables: ["url": url], as: R.self)
+        return r.scrapeSceneURL.map { [$0] } ?? []
     }
 
-    /// 关键词搜索削刮
-    static func scrapeSceneQuery(_ c: GraphQLClient, query: String) async throws -> [ScrapedScene] {
-        struct R: Decodable { let queryScrapeSceneQuery: [ScrapedScene?] }
-        let q = """
-        query ScrapeSceneQuery($filter: FindFilterType!, $query: String!) {
-          queryScrapeSceneQuery(filter: $filter, query: $query) {
-            id title details date duration urls image
-            studio { id stored_id name image_path }
-            performers { id stored_id name disambiguation birthdate details country image_path tags { id stored_id name } }
-            tags { id stored_id name }
-          }
-        }
-        """
-        let r: R = try await c.send(q, variables: [
-            "filter": ["q": query], "query": query
-        ], as: R.self)
-        return r.queryScrapeSceneQuery.compactMap { $0 }
-    }
+    // MARK: 削刮 - 工作室（本套 Stash 仅支持 stash-box 源，按名称查询）
 
-    // MARK: 削刮 - 工作室
-
-    /// 片段削刮：以现有工作室信息为上下文，用指定刮削器削刮
-    static func scrapeStudioFragment(_ c: GraphQLClient, scraperId: String, studioId: String) async throws -> [ScrapedStudio] {
+    static func scrapeStudio(_ c: GraphQLClient, source: [String: Any], query: String) async throws -> [ScrapedStudio] {
         struct R: Decodable { let scrapeSingleStudio: [ScrapedStudio?] }
         let q = """
-        mutation ScrapeSingleStudio($source: ScraperSourceInput!, $input: ScrapeSingleStudioInput!) {
-          scrapeSingleStudio(source: $source, input: $input) {
-            id stored_id name image_path details urls
-            tags { id stored_id name }
-          }
+        query ScrapeSingleStudio($source: ScraperSourceInput!, $input: ScrapeSingleStudioInput!) {
+          scrapeSingleStudio(source: $source, input: $input) { \(scrapedStudioSelection) }
         }
         """
         let r: R = try await c.send(q, variables: [
-            "source": ["source_type": "SCRAPER", "id": scraperId],
-            "input": ["studio_id": studioId]
+            "source": source, "input": ["query": query]
         ], as: R.self)
         return r.scrapeSingleStudio.compactMap { $0 }
-    }
-
-    /// 工作室 URL 削刮（与场景相同模式：source 指向 URL，input 留空）
-    static func scrapeStudioURL(_ c: GraphQLClient, url: String) async throws -> [ScrapedStudio] {
-        struct R: Decodable { let scrapeSingleStudio: [ScrapedStudio?] }
-        let q = """
-        mutation ScrapeStudioURL($source: ScraperSourceInput!) {
-          scrapeSingleStudio(source: $source, input: {}) {
-            id stored_id name image_path details urls
-            tags { id stored_id name }
-          }
-        }
-        """
-        let r: R = try await c.send(q, variables: [
-            "source": ["source_type": "URL", "url": url]
-        ], as: R.self)
-        return r.scrapeSingleStudio.compactMap { $0 }
-    }
-
-    /// 工作室关键词搜索削刮
-    static func scrapeStudioQuery(_ c: GraphQLClient, query: String) async throws -> [ScrapedStudio] {
-        struct R: Decodable { let queryScrapeStudioQuery: [ScrapedStudio?] }
-        let q = """
-        query ScrapeStudioQuery($filter: FindFilterType!, $query: String!) {
-          queryScrapeStudioQuery(filter: $filter, query: $query) {
-            id stored_id name image_path details urls
-            tags { id stored_id name }
-          }
-        }
-        """
-        let r: R = try await c.send(q, variables: [
-            "filter": ["q": query], "query": query
-        ], as: R.self)
-        return r.queryScrapeStudioQuery.compactMap { $0 }
     }
 
     // MARK: 削刮 - 演员
 
-    static func scrapePerformerFragment(_ c: GraphQLClient, scraperId: String, performerId: String) async throws -> [ScrapedPerformer] {
+    static func scrapePerformerFragment(_ c: GraphQLClient, source: [String: Any], performerId: String) async throws -> [ScrapedPerformer] {
         struct R: Decodable { let scrapeSinglePerformer: [ScrapedPerformer?] }
         let q = """
-        mutation ScrapeSinglePerformer($source: ScraperSourceInput!, $input: ScrapeSinglePerformerInput!) {
-          scrapeSinglePerformer(source: $source, input: $input) {
-            id stored_id name disambiguation birthdate details country ethnicity
-            measurements career_length urls image_path
-            tags { id stored_id name }
-          }
+        query ScrapeSinglePerformer($source: ScraperSourceInput!, $input: ScrapeSinglePerformerInput!) {
+          scrapeSinglePerformer(source: $source, input: $input) { \(scrapedPerformerSelection) }
         }
         """
         let r: R = try await c.send(q, variables: [
-            "source": ["source_type": "SCRAPER", "id": scraperId],
-            "input": ["performer_id": performerId]
+            "source": source, "input": ["performer_id": performerId]
         ], as: R.self)
         return r.scrapeSinglePerformer.compactMap { $0 }
     }
 
-    static func scrapePerformerQuery(_ c: GraphQLClient, query: String) async throws -> [ScrapedPerformer] {
-        struct R: Decodable { let queryScrapePerformerQuery: [ScrapedPerformer?] }
+    static func scrapePerformerByName(_ c: GraphQLClient, source: [String: Any], query: String) async throws -> [ScrapedPerformer] {
+        struct R: Decodable { let scrapeSinglePerformer: [ScrapedPerformer?] }
         let q = """
-        query ScrapePerformerQuery($filter: FindFilterType!, $query: String!) {
-          queryScrapePerformerQuery(filter: $filter, query: $query) {
-            id stored_id name disambiguation birthdate details country ethnicity
-            measurements career_length urls image_path
-            tags { id stored_id name }
-          }
+        query ScrapeSinglePerformer($source: ScraperSourceInput!, $input: ScrapeSinglePerformerInput!) {
+          scrapeSinglePerformer(source: $source, input: $input) { \(scrapedPerformerSelection) }
         }
         """
         let r: R = try await c.send(q, variables: [
-            "filter": ["q": query], "query": query
+            "source": source, "input": ["query": query]
         ], as: R.self)
-        return r.queryScrapePerformerQuery.compactMap { $0 }
+        return r.scrapeSinglePerformer.compactMap { $0 }
     }
 
-    /// 演员 URL 削刮
+    /// 演员 URL 削刮（服务端返回单个对象，包装为数组）
     static func scrapePerformerURL(_ c: GraphQLClient, url: String) async throws -> [ScrapedPerformer] {
-        struct R: Decodable { let scrapePerformerURL: [ScrapedPerformer?] }
+        struct R: Decodable { let scrapePerformerURL: ScrapedPerformer? }
         let q = """
-        mutation ScrapePerformerURL($url: String!) {
-          scrapePerformerURL(url: $url) {
-            id stored_id name disambiguation birthdate details country ethnicity
-            measurements career_length urls image_path
-            tags { id stored_id name }
-          }
+        query ScrapePerformerURL($url: String!) {
+          scrapePerformerURL(url: $url) { \(scrapedPerformerSelection) }
         }
         """
         let r: R = try await c.send(q, variables: ["url": url], as: R.self)
-        return r.scrapePerformerURL.compactMap { $0 }
+        return r.scrapePerformerURL.map { [$0] } ?? []
     }
 
     // MARK: 元数据写回
@@ -500,19 +467,19 @@ enum StashAPI {
         var changed = 0
 
         func resolvePerformerID(_ p: ScrapedPerformer) async throws -> String? {
-            if let sid = p.storedId ?? p.id { return sid }
+            if let sid = p.storedId { return sid }
             guard let name = p.name, !name.isEmpty else { return nil }
             return try await createPerformer(c, name: name)
         }
 
         func resolveTagID(_ t: ScrapedTag) async throws -> String? {
-            if let sid = t.storedId ?? t.id { return sid }
+            if let sid = t.storedId { return sid }
             guard let name = t.name, !name.isEmpty else { return nil }
             return try await createTag(c, name: name)
         }
 
         func resolveStudioID(_ s: ScrapedStudio) async throws -> String? {
-            if let sid = s.storedId ?? s.id { return sid }
+            if let sid = s.storedId { return sid }
             guard let name = s.name, !name.isEmpty else { return nil }
             return try await createStudio(c, name: name)
         }
@@ -560,7 +527,8 @@ enum StashAPI {
             if let v = p.country { input.country = v; changed += 1 }
             if let v = p.ethnicity { input.ethnicity = v; changed += 1 }
             if let v = p.measurements { input.measurements = v; changed += 1 }
-            if let v = p.careerLength { input.careerLength = v; changed += 1 }
+            let career = [p.careerStart, p.careerEnd].compactMap { $0 }.joined(separator: " - ")
+            if !career.isEmpty { input.careerLength = career; changed += 1 }
             if let ts = p.tags {
                 var ids: [String] = []
                 for t in ts { if let tid = try await resolveTagID(t) { ids.append(tid) } }

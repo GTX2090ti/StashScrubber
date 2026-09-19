@@ -14,37 +14,37 @@ enum ScrapeKind: Hashable {
     }
 }
 
-// MARK: - 刮削结果实体（对应 Stash ScrapedScene / ScrapedStudio / ScrapedPerformer）
+// MARK: - 削刮结果实体
+//
+// 真机 schema 实测（2026-09-19）：ScrapedScene/Performer/Tag/Studio 均无 id 字段（仅 stored_id）；
+// 演员图片在 images 数组；从业时间拆为 career_start / career_end；工作室图片字段名为 image。
 
 struct ScrapedStudio: Codable, Hashable {
-    let id: String?
     let storedId: String?
     let name: String?
-    let imagePath: String?
+    let image: String?
     let details: String?
+    let aliases: String?
     let urls: [String]?
     let tags: [ScrapedTag]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, details, urls, tags
+        case name, image, details, aliases, urls, tags
         case storedId = "stored_id"
-        case imagePath = "image_path"
     }
 }
 
 struct ScrapedTag: Codable, Hashable {
-    let id: String?
     let storedId: String?
     let name: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name
+        case name
         case storedId = "stored_id"
     }
 }
 
 struct ScrapedPerformer: Codable, Hashable {
-    let id: String?
     let storedId: String?
     let name: String?
     let disambiguation: String?
@@ -53,23 +53,23 @@ struct ScrapedPerformer: Codable, Hashable {
     let country: String?
     let ethnicity: String?
     let measurements: String?
-    let careerLength: String?
+    let careerStart: String?
+    let careerEnd: String?
     let urls: [String]?
-    let imagePath: String?
+    let images: [String]?
     let tags: [ScrapedTag]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, disambiguation, birthdate, details
-        case country, ethnicity, measurements, urls
+        case name, disambiguation, birthdate, details
+        case country, ethnicity, measurements, urls, images
         case storedId = "stored_id"
-        case imagePath = "image_path"
-        case careerLength = "career_length"
+        case careerStart = "career_start"
+        case careerEnd = "career_end"
         case tags
     }
 }
 
 struct ScrapedScene: Codable, Hashable {
-    let id: String?
     let title: String?
     let details: String?
     let date: String?
@@ -130,8 +130,8 @@ enum ScrapedItem: Hashable, Identifiable {
         }
         switch self {
         case .scene(let s): return httpOnly(s.image)
-        case .studio(let st): return st.imagePath
-        case .performer(let p): return p.imagePath
+        case .studio(let st): return httpOnly(st.image)
+        case .performer(let p): return httpOnly(p.images?.first)
         }
     }
 }
