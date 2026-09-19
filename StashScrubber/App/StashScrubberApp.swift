@@ -11,7 +11,6 @@ struct StashScrubberApp: App {
         WindowGroup {
             RootGate()
                 .environmentObject(AppSettings.shared)
-                .environmentObject(AccountStore.shared)
                 .environmentObject(WiFiAutoSwitch.shared)
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
@@ -23,12 +22,12 @@ struct StashScrubberApp: App {
     }
 }
 
-// 登录门禁：未登录 / 会话过期时展示登录页
+// 登录门禁：未完成服务器初始化（API Key 登入）时展示登录页
 struct RootGate: View {
-    @EnvironmentObject private var account: AccountStore
+    @AppStorage("stash.serverSetupDone") private var serverSetupDone = false
 
     var body: some View {
-        if account.currentUser != nil {
+        if serverSetupDone {
             RootView()
         } else {
             LoginView()
@@ -239,7 +238,7 @@ struct ServerSwitcherMenu: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var account: AccountStore
+    @AppStorage("stash.serverSetupDone") private var serverSetupDone = false
     @State private var testing = false
     @State private var testResult: String?
     @State private var error: String?
@@ -337,17 +336,20 @@ struct SettingsView: View {
                     Text("按 WiFi 名称（SSID）自动在内网/外网档案间切换，规则支持增删改；回到前台时自动检测。")
                 }
 
-                Section("账号") {
-                    LabeledContent("当前用户", value: account.currentUser ?? "-")
+                Section {
                     Button(role: .destructive) {
-                        account.logout()
+                        serverSetupDone = false
                     } label: {
-                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("重置服务器配置（返回登录页）", systemImage: "arrow.counterclockwise")
                     }
+                } header: {
+                    Text("账号")
+                } footer: {
+                    Text("返回登录页后需重新填写内外网地址与 API Key；登录会实测连接，密钥错误会被直接拦截。")
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.2.1")
+                    LabeledContent("版本", value: "1.3.0")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }

@@ -1,53 +1,41 @@
 import SwiftUI
 
-// MARK: - 登录（App 内账号门禁，无注册功能）
+// MARK: - 登录（API Key 即登录凭据，无账号密码）
 //
-// 首次登录：除账号密码外，必须填写内网 / 外网两个服务地址，
-// 提交后自动生成「内网 / 外网」两个服务器档案（内网默认激活）。
-// 首次登录即创建本机账号（账号不存在时自动建立，密码 PBKDF2 加盐哈希存储）。
+// 首次使用必须填写：内网地址、外网地址、API Key（Stash 设置 → 安全 → API Key）。
+// 点「登录」会对两个地址各做一次真实连接测试（带 ApiKey 头），
+// 全部通过才保存档案并进入主界面，密钥缺失/错误（401）会在登录时被直接拦截。
 
 struct LoginView: View {
-    @EnvironmentObject private var account: AccountStore
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("stash.serverSetupDone") private var serverSetupDone = false
-    @State private var username = ""
-    @State private var password = ""
     @State private var lanURL = ""
     @State private var wanURL = ""
     @State private var apiKey = ""
     @State private var errorText: String?
     @State private var busy = false
-
-    private var serverFieldsInvalid: Bool {
-        !serverSetupDone && (Self.invalidAddress(lanURL) || Self.invalidAddress(wanURL))
-    }
+    @State private var lanResult: String?
+    @State private var wanResult: String?
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("账号") {
-                    TextField("用户名", text: $username)
+                Section {
+                    TextField("内网地址（如 http://192.168.2.210:9999）", text: $lanURL)
+                        .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("密码", text: $password)
-                }
-
-                if !serverSetupDone {
-                    Section {
-                        TextField("内网地址（如 http://192.168.2.210:9999）", text: $lanURL)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        TextField("外网地址（如 https://stash.example.com）", text: $wanURL)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        SecureField("API Key（内外网通用，可留空）", text: $apiKey)
-                    } header: {
-                        Text("服务器配置（首次登录必填）")
-                    } footer: {
-                        Text("需填写内网与外网两个服务地址（http:// 或 https:// 开头，可含路径前缀），登录后自动生成内外网档案，可在设置中修改或经 WiFi 规则自动切换。")
-                    }
+                    TextField("外网地址（如 https://stash.example.com）", text: $wanURL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("API Key（必填）", text: $apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("服务器配置（首次使用必填）")
+                } footer: {
+                    Text("登录时会分别实测内网与外网连接，均通过后才进入。API Key 在 Stash 的 设置 → 安全 中获取；此后可按 WiFi 规则在内外网档案间自动切换。")
                 }
 
                 if let e = errorText {
@@ -73,12 +61,23 @@ struct LoginView: View {
                             Spacer()
                         }
                     }
-                    .disabled(busy || username.isEmpty || password.isEmpty || serverFieldsInvalid)
-                } footer: {
-                    Text("首次登录将以此创建本机账号；密码使用 PBKDF2 加盐哈希存储，不保存明文。")
+                    .disabled(busy || Self.invalidAddress(lanURL) || Self.invalidAddress(wanURL) || apiKey.isEmpty)
+
+                    if let r = lanResult {
+                        Label(r, systemImage: r.contains("成功") ? "checkmark.circle" : "xmark.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(r.contains("成功") ? Color.green : Color.red)
+                    }
+                    if let r = wanResult {
+                        Label(r, systemImage: r.contains("成功") ? "checkmark.circle" : "xmark.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(r.contains("成功") ? Color.green : Color.red)
+                    }
+                } header: {
+                    Text("连接")
                 }
             }
-            .navigationTitle("Stash 削刮")
+            .navigationTitle("Stash 登入")
         }
     }
 
@@ -89,22 +88,24 @@ struct LoginView: View {
 
     private func submit() async {
         errorText = nil
-        guard !serverFieldsInvalid else {
-            errorText = "请填写有效的内网与外网地址（以 http:// 或 https:// 开头）"
-            return
-        }
+        lanResult = nil
+        wanResult = nil
         busy = true
         defer { busy = false }
+        let lan = lanURL.trimmingCharacters(in: .whitespaces)
+        let wan = wanURL.trimmingCharacters(in: .whitespaces)
+        let key = apiKey.trimmingCharacters(in: .whitespaces)
         do {
-            try account.loginOrRegister(username: username, password: password)
-            if !serverSetupDone {
-                settings.applyFirstSetup(
-                    lanURL: lanURL.trimmingCharacters(in: .whitespaces),
-                    wanURL: wanURL.trimmingCharacters(in: .whitespaces),
-                    apiKey: apiKey
-                )
-                serverSetupDone = true
-            }
+            let lanClient = try GraphQLClient(baseURL: lan, apiKey: key)
+            let lanV = try await StashAPI.version(lanClient)
+            lanResult = "内网连接成功 · Stash \(lanV)"
+
+            let wanClient = try GraphQLClient(baseURL: wan, apiKey: key)
+            let wanV = try await StashAPI.version(wanClient)
+            wanResult = "外网连接成功 · Stash \(wanV)"
+
+            settings.applyFirstSetup(lanURL: lan, wanURL: wan, apiKey: key)
+            serverSetupDone = true
         } catch {
             errorText = error.localizedDescription
         }

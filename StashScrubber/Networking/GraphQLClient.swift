@@ -18,6 +18,9 @@ enum StashAPIError: LocalizedError {
         case .badURL(let u):
             return "无效的服务地址：\(u)"
         case .http(let code, let body):
+            if code == 401 {
+                return "HTTP 401：API Key 缺失或错误。请到 Stash 设置 → 安全 复制 API Key，在登录页或设置中填写"
+            }
             return "HTTP \(code)：\(body.prefix(200))"
         case .server(let msgs):
             return "Stash 返回错误：\n" + msgs.joined(separator: "\n")
