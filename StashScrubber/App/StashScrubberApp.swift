@@ -16,7 +16,7 @@ struct StashScrubberApp: App {
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         // 回到前台时按 WiFi 规则自动切换内外网档案
-                        WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
+                        Task { await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared) }
                     }
                 }
         }

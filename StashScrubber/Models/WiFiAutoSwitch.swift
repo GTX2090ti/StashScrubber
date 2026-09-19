@@ -43,16 +43,20 @@ final class WiFiAutoSwitch: ObservableObject {
         }
     }
 
-    /// 当前 WiFi SSID（需 Access WiFi Information 权限，失败返回 nil）
-    static func currentSSID() -> String? {
-        if let n = NEHotspotNetwork.current, !n.ssid.isEmpty { return n.ssid }
+    /// 当前 WiFi SSID（iOS 14+ 官方通道）
+    /// 运行时需同时满足：Access WiFi Information 权限 + （精确定位授权 / 曾用 NEHotspotConfiguration 配网 / 有活跃 VPN）之一，
+    /// 不满足时返回 nil，由界面提示，用户仍可手动切换档案。
+    static func fetchCurrentSSID() async -> String? {
+        if let n = try? await NEHotspotNetwork.fetchCurrent(), !n.ssid.isEmpty {
+            return n.ssid
+        }
         return nil
     }
 
     /// App 回到前台 / 手动检测时调用：按规则自动切换档案
-    func checkAndSwitch(settings: AppSettings) {
+    func checkAndSwitch(settings: AppSettings) async {
         guard enabled, !rules.isEmpty else { return }
-        let ssid = Self.currentSSID()
+        let ssid = await Self.fetchCurrentSSID()
         lastSSID = ssid
         guard let ssid else {
             lastAction = "无法获取当前 WiFi 名称（请检查定位权限）"

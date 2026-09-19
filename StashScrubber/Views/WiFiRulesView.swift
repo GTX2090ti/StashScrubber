@@ -19,7 +19,7 @@ struct WiFiRulesView: View {
                         .foregroundStyle(.secondary)
                 }
                 Button {
-                    wifi.checkAndSwitch(settings: settings)
+                    Task { await wifi.checkAndSwitch(settings: settings) }
                 } label: {
                     Label("立即检测并切换", systemImage: "dot.radiowaves.left.and.right")
                 }
@@ -104,7 +104,9 @@ struct RuleEditor: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button {
-                        if let s = WiFiAutoSwitch.currentSSID() { ssid = s }
+                        Task { @MainActor in
+                            if let s = await WiFiAutoSwitch.fetchCurrentSSID() { ssid = s }
+                        }
                     } label: {
                         Label("填入当前 WiFi", systemImage: "wifi")
                     }
