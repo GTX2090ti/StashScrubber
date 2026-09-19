@@ -23,9 +23,6 @@ struct SceneFilterSheet: View {
     private var performerBinding: Binding<Set<String>> {
         Binding(get: { Set(draft.performerIDs) }, set: { draft.performerIDs = Array($0).sorted() })
     }
-    private var tagBinding: Binding<Set<String>> {
-        Binding(get: { Set(draft.tagIDs) }, set: { draft.tagIDs = Array($0).sorted() })
-    }
 
     var body: some View {
         NavigationStack {
@@ -44,21 +41,6 @@ struct SceneFilterSheet: View {
                         options: taxonomy.performers,
                         selection: performerBinding
                     )
-                }
-
-                Section {
-                    MultiSelectPicker(
-                        title: "选择标签（可多选）",
-                        options: taxonomy.tags,
-                        selection: tagBinding
-                    )
-                    Picker("匹配方式", selection: $draft.tagIncludeAll) {
-                        Text("任一标签").tag(false)
-                        Text("全部标签").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("标签")
                 }
 
                 Section("数值条件") {
@@ -124,7 +106,7 @@ struct SceneFilterSheet: View {
                     }
                 }
             }
-            .navigationTitle("筛选场景")
+            .navigationTitle("筛选短片")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

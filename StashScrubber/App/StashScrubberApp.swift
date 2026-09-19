@@ -47,7 +47,7 @@ struct ServerProfile: Codable, Identifiable, Equatable {
 // MARK: - 根视图：iPhone 用 TabView，iPad 用双栏 SplitView（均为原生组件）
 
 enum AppSection: Hashable {
-    case scenes, studios, performers, tags, settings
+    case scenes, performers, settings
 }
 
 struct RootView: View {
@@ -68,14 +68,8 @@ struct TabRootView: View {
     var body: some View {
         TabView(selection: $selection) {
             ScenesView()
-                .tabItem { Label("场景", systemImage: "film") }
+                .tabItem { Label("短片", systemImage: "film") }
                 .tag(AppSection.scenes)
-            StudiosView()
-                .tabItem { Label("工作室", systemImage: "building.2") }
-                .tag(AppSection.studios)
-            TagsView()
-                .tabItem { Label("标签", systemImage: "tag") }
-                .tag(AppSection.tags)
             PerformersView()
                 .tabItem { Label("演员", systemImage: "person.2") }
                 .tag(AppSection.performers)
@@ -93,13 +87,7 @@ struct SplitRootView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 NavigationLink(value: AppSection.scenes) {
-                    Label("场景", systemImage: "film")
-                }
-                NavigationLink(value: AppSection.studios) {
-                    Label("工作室", systemImage: "building.2")
-                }
-                NavigationLink(value: AppSection.tags) {
-                    Label("标签", systemImage: "tag")
+                    Label("短片", systemImage: "film")
                 }
                 NavigationLink(value: AppSection.performers) {
                     Label("演员", systemImage: "person.2")
@@ -113,12 +101,10 @@ struct SplitRootView: View {
         } detail: {
             switch selection {
             case .scenes: ScenesView()
-            case .studios: StudiosView()
             case .performers: PerformersView()
-            case .tags: TagsView()
             case .settings: SettingsView()
             case nil:
-                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 场景 / 工作室 / 演员 / 标签 / 设置")
+                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 短片 / 演员 / 设置")
             }
         }
     }
@@ -349,7 +335,7 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.3.0")
+                    LabeledContent("版本", value: "1.5.0")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }

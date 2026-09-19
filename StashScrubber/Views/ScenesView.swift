@@ -60,8 +60,8 @@ struct ScenesView: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("场景")
-                .searchable(text: $vm.query, prompt: "搜索场景标题 / 简介")
+                .navigationTitle("短片")
+                .searchable(text: $vm.query, prompt: "搜索短片标题 / 简介")
                 .onSubmit(of: .search) { Task { await vm.reload() } }
                 .refreshable { await vm.reload() }
                 .task(id: settings.activeProfileID) { await vm.reload() }
@@ -124,12 +124,12 @@ struct ScenesView: View {
             ProgressView("加载中…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if vm.scenes.isEmpty {
-            EmptyStateView(title: "没有场景", hint: "下拉刷新，或检查服务器与过滤条件")
+            EmptyStateView(title: "没有短片", hint: "下拉刷新，或检查服务器与过滤条件")
         } else {
             ScrollView {
                 if viewMode == "grid" {
                     // 紧凑网格：一排 3 个（iPhone），iPad 随宽度 5~7 列
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
                         ForEach(vm.scenes) { s in
                             NavigationLink(value: s.id) {
                                 SceneCard(scene: s)
@@ -178,7 +178,7 @@ struct SceneCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp)
-                .frame(height: 100)
+                .aspectRatio(16 / 9, contentMode: .fill)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             Text(scene.title ?? "（无标题）")
                 .font(.subheadline.weight(.semibold))
@@ -250,6 +250,11 @@ struct SceneDetailView: View {
     @State private var titleDraft = ""
     @State private var savingTitle = false
     @State private var copiedPath = false
+    @State private var tagNav: TagNavID?
+    @State private var showTagDetail = false
+    @State private var studioNav: StudioNavID?
+    @State private var showStudioDetail = false
+    @State private var showMerge = false
 
     var body: some View {
         Group {
@@ -262,12 +267,20 @@ struct SceneDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle(scene?.title ?? "场景")
+        .navigationTitle(scene?.title ?? "短片")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: sceneID) { await load() }
         .errorAlert($error)
-        .navigationDestination(for: StudioNavID.self) { v in
-            StudioDetailView(studioID: v.id)
+        .navigationDestination(isPresented: $showTagDetail) {
+            if let t = tagNav { TagDetailView(tagID: t.id, tagName: t.name) }
+        }
+        .navigationDestination(isPresented: $showStudioDetail) {
+            if let st = studioNav { StudioDetailView(studioID: st.id, studioName: st.name) }
+        }
+        .sheet(isPresented: $showMerge) {
+            if let scene {
+                MergeSceneSheet(target: scene) { Task { await load() } }
+            }
         }
         .sheet(isPresented: $showEdit) {
             if let scene {
@@ -288,6 +301,11 @@ struct SceneDetailView: View {
                         showScrape = true
                     } label: {
                         Label("元数据削刮", systemImage: "sparkle.magnifyingglass")
+                    }
+                    Button {
+                        showMerge = true
+                    } label: {
+                        Label("合并其他短片到本片", systemImage: "arrow.triangle.merge")
                     }
                 } label: {
                     Label("削刮", systemImage: "sparkles")
@@ -331,6 +349,35 @@ struct SceneDetailView: View {
         }
     }
 
+    /// 点击标签：先校验 Stash 中是否仍存在，再跳转标签详情
+    private func openTag(_ t: Tag) async {
+        do {
+            let client = try settings.makeClient()
+            guard try await StashAPI.findTag(client, id: t.id) != nil else {
+                error = "「\(t.name)」在 Stash 中已不存在（可能已被删除），无法打开标签详情"
+                return
+            }
+            tagNav = TagNavID(id: t.id, name: t.name)
+            showTagDetail = true
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// 点击工作室：先校验是否仍存在，再跳转工作室详情
+    private func openStudio(_ st: Studio) async {
+        do {
+            let client = try settings.makeClient()
+            _ = try await StashAPI.findStudioByID(client, id: st.id)   // 不存在会抛 noData
+            studioNav = StudioNavID(id: st.id, name: st.name)
+            showStudioDetail = true
+        } catch StashAPIError.noData {
+            error = "「\(st.name)」在 Stash 中已不存在（可能已被删除），无法打开工作室详情"
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 响应式适配
     @ViewBuilder
     private func detail(_ s: Scene) -> some View {
@@ -363,32 +410,6 @@ struct SceneDetailView: View {
 
     private func infoColumn(_ s: Scene) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 文件路径（可选中 + 一键复制，成功提示）
-            if let path = s.files?.first?.path, !path.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("文件路径")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Button {
-                            UIPasteboard.general.string = path
-                            copiedPath = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                copiedPath = false
-                            }
-                        } label: {
-                            Label(copiedPath ? "已复制" : "复制",
-                                  systemImage: copiedPath ? "checkmark" : "doc.on.doc")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    Text(path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
             // 标题（点击编辑，保存后实时更新）
             if editingTitle {
                 VStack(alignment: .leading, spacing: 8) {
@@ -422,8 +443,36 @@ struct SceneDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            if let st = s.studio {
-                NavigationLink(value: StudioNavID(id: st.id)) {
+            // 文件路径（可选中 + 一键复制，成功提示）
+            if let path = s.files?.first?.path, !path.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("文件路径")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button {
+                            UIPasteboard.general.string = path
+                            copiedPath = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                copiedPath = false
+                            }
+                        } label: {
+                            Label(copiedPath ? "已复制" : "复制",
+                                  systemImage: copiedPath ? "checkmark" : "doc.on.doc")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    Text(path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+                        if let st = s.studio {
+                Button {
+                    Task { await openStudio(st) }
+                } label: {
                     Label(st.name, systemImage: "building.2")
                         .font(.subheadline)
                 }
@@ -461,7 +510,14 @@ struct SceneDetailView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("标签").font(.subheadline.weight(.semibold))
                     FlowLayout(spacing: 6) {
-                        ForEach(ts) { t in Chip(text: t.name) }
+                        ForEach(ts) { t in
+                            Button {
+                                Task { await openTag(t) }
+                            } label: {
+                                Chip(text: t.name)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }

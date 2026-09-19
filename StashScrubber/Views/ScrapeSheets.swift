@@ -40,11 +40,9 @@ struct ScrapeSheet: View {
     @State private var picked: ScrapedItem?
     @State private var didApply = false
 
-    /// 本套 Stash：工作室削刮仅支持 stash-box 按名称，无片段/URL 方式
     private var availableModes: [Mode] {
         switch kind {
         case .scene, .performer: return [.fragment, .query, .url]
-        case .studio: return [.query]
         }
     }
 
@@ -66,10 +64,8 @@ struct ScrapeSheet: View {
             Source(id: "box-\(i)", name: (b.name ?? "Stash-box") + "（Stash-box）",
                    dict: ["stash_box_index": i])
         }
-        if kind != .studio {
-            s += localScrapers.filter { $0.supportsName }.map {
-                Source(id: "sc-\($0.id)", name: $0.name, dict: ["scraper_id": $0.id])
-            }
+        s += localScrapers.filter { $0.supportsName }.map {
+            Source(id: "sc-\($0.id)", name: $0.name, dict: ["scraper_id": $0.id])
         }
         return s
     }
@@ -268,8 +264,6 @@ struct ScrapeSheet: View {
             case .scene:
                 return try await StashAPI.scrapeSceneFragment(client, source: src.dict, sceneId: targetID)
                     .map { ScrapedItem.scene($0) }
-            case .studio:
-                return []   // 本套 Stash 工作室无片段削刮
             case .performer:
                 return try await StashAPI.scrapePerformerFragment(client, source: src.dict, performerId: targetID)
                     .map { ScrapedItem.performer($0) }
@@ -283,9 +277,6 @@ struct ScrapeSheet: View {
             case .scene:
                 return try await StashAPI.scrapeSceneByName(client, source: src.dict, query: queryText)
                     .map { ScrapedItem.scene($0) }
-            case .studio:
-                return try await StashAPI.scrapeStudio(client, source: src.dict, query: queryText)
-                    .map { ScrapedItem.studio($0) }
             case .performer:
                 return try await StashAPI.scrapePerformerByName(client, source: src.dict, query: queryText)
                     .map { ScrapedItem.performer($0) }
@@ -298,8 +289,6 @@ struct ScrapeSheet: View {
             switch kind {
             case .scene:
                 return try await StashAPI.scrapeSceneURL(client, url: urlText).map { ScrapedItem.scene($0) }
-            case .studio:
-                return []   // 本套 Stash 工作室无 URL 削刮
             case .performer:
                 return try await StashAPI.scrapePerformerURL(client, url: urlText).map { ScrapedItem.performer($0) }
             }

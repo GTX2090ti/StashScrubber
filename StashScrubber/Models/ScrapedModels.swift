@@ -3,12 +3,11 @@ import Foundation
 // MARK: - 削刮目标类型
 
 enum ScrapeKind: Hashable {
-    case scene, studio, performer
+    case scene, performer
 
     var title: String {
         switch self {
-        case .scene: return "场景"
-        case .studio: return "工作室"
+        case .scene: return "短片"
         case .performer: return "演员"
         }
     }
@@ -85,15 +84,12 @@ struct ScrapedScene: Codable, Hashable {
 
 enum ScrapedItem: Hashable, Identifiable {
     case scene(ScrapedScene)
-    case studio(ScrapedStudio)
     case performer(ScrapedPerformer)
 
     var id: String {
         switch self {
         case .scene(let s):
             return "scene:" + (s.title ?? "") + "|" + (s.date ?? "") + "|" + (s.studio?.name ?? "")
-        case .studio(let st):
-            return "studio:" + (st.name ?? "") + "|" + (st.urls?.first ?? "")
         case .performer(let p):
             return "perf:" + (p.name ?? "") + "|" + (p.birthdate ?? "")
         }
@@ -101,8 +97,7 @@ enum ScrapedItem: Hashable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .scene(let s): return s.title ?? "（无标题场景）"
-        case .studio(let st): return st.name ?? "（无名工作室）"
+        case .scene(let s): return s.title ?? "（无标题短片）"
         case .performer(let p): return p.name ?? "（无名演员）"
         }
     }
@@ -111,10 +106,6 @@ enum ScrapedItem: Hashable, Identifiable {
         switch self {
         case .scene(let s):
             let parts = [s.studio?.name, s.date].compactMap { $0 }
-            return parts.isEmpty ? nil : parts.joined(separator: " · ")
-        case .studio(let st):
-            let parts = [st.urls?.first, st.details?.components(separatedBy: "\n").first]
-                .compactMap { $0 }.filter { !$0.isEmpty }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         case .performer(let p):
             let parts = [p.birthdate, p.country].compactMap { $0 }
@@ -130,7 +121,6 @@ enum ScrapedItem: Hashable, Identifiable {
         }
         switch self {
         case .scene(let s): return httpOnly(s.image)
-        case .studio(let st): return httpOnly(st.image)
         case .performer(let p): return httpOnly(p.images?.first)
         }
     }
@@ -159,18 +149,6 @@ struct ExistingMeta: Hashable {
         performers = scene.performers?.map(\.name) ?? []
         tags = scene.tags?.map(\.name) ?? []
         urls = scene.urls ?? []
-    }
-
-    init(studio: Studio) {
-        title = studio.name
-        details = studio.details
-        date = nil
-        birthdate = nil
-        country = nil
-        self.studio = nil
-        performers = []
-        tags = studio.tags?.map(\.name) ?? []
-        urls = studio.url.map { [$0] } ?? []
     }
 
     init(performer: Performer) {

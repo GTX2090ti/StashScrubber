@@ -38,7 +38,6 @@ struct SceneEditView: View {
     @State private var rating: Double = 0
     @State private var studioId = ""
     @State private var performerIds: Set<String> = []
-    @State private var tagIds: Set<String> = []
     @State private var urlsText = ""
     @State private var saving = false
     @State private var error: String?
@@ -78,7 +77,6 @@ struct SceneEditView: View {
                 }
                 Section {
                     MultiSelectPicker(title: "演员", options: taxonomy.performers, selection: $performerIds)
-                    MultiSelectPicker(title: "标签", options: taxonomy.tags, selection: $tagIds)
                 }
                 Section {
                     TextEditor(text: $urlsText)
@@ -90,7 +88,7 @@ struct SceneEditView: View {
                     Text("URL（每行一个）")
                 }
             }
-            .navigationTitle("编辑场景")
+            .navigationTitle("编辑短片")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -111,7 +109,6 @@ struct SceneEditView: View {
                 rating = Double(scene.rating100 ?? 0)
                 studioId = scene.studio?.id ?? ""
                 performerIds = Set(scene.performers?.map(\.id) ?? [])
-                tagIds = Set(scene.tags?.map(\.id) ?? [])
                 urlsText = (scene.urls ?? []).joined(separator: "\n")
                 if let client = try? settings.makeClient() {
                     await taxonomy.load(client: client)
@@ -138,7 +135,6 @@ struct SceneEditView: View {
                 rating100: rating > 0 ? Int(rating) : nil,
                 studioId: studioId.isEmpty ? nil : studioId,
                 performerIds: Array(performerIds),
-                tagIds: Array(tagIds),
                 urls: urls.isEmpty ? nil : urls
             )
             try await StashAPI.updateScene(client, input: input)

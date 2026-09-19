@@ -92,24 +92,20 @@ struct SceneFile: Codable, Hashable {
     let path: String?
 }
 
-/// 导航用途：场景详情 → 工作室详情（String 目的地在列表页已被场景占用，用包装类型区分）
+/// 导航用途：详情页点击标签 / 工作室跳转（String 目的地已被短片占用，用包装类型区分）
+struct TagNavID: Hashable {
+    let id: String
+    let name: String
+}
+
 struct StudioNavID: Hashable {
     let id: String
+    let name: String
 }
 
 struct ScenePage: Codable {
     let count: Int
     let scenes: [Scene]
-}
-
-struct StudioPage: Codable {
-    let count: Int
-    let studios: [Studio]
-}
-
-struct TagPage: Codable {
-    let count: Int
-    let tags: [Tag]
 }
 
 struct PerformerPage: Codable {
@@ -135,7 +131,6 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsFragment: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("FRAGMENT") ?? false
-        case .studio: return false
         case .performer: return performer?.supportedScrapes?.contains("FRAGMENT") ?? false
         }
     }
@@ -143,7 +138,6 @@ struct Scraper: Codable, Hashable, Identifiable {
     var supportsName: Bool {
         switch Self.kindContext {
         case .scene: return scene?.supportedScrapes?.contains("NAME") ?? false
-        case .studio: return false
         case .performer: return performer?.supportedScrapes?.contains("NAME") ?? false
         }
     }
@@ -172,15 +166,6 @@ struct SceneUpdateInput: Encodable {
     var performerIds: [String]?
     var tagIds: [String]?
     var urls: [String]?
-}
-
-struct StudioUpdateInput: Encodable {
-    var id: String
-    var name: String?
-    var url: String?
-    var details: String?
-    var rating100: Int?
-    var tagIds: [String]?
 }
 
 struct PerformerUpdateInput: Encodable {

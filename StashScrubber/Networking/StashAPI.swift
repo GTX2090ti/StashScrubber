@@ -64,116 +64,6 @@ enum StashAPI {
         return s
     }
 
-    // MARK: 查询 - 工作室
-
-    static func findStudios(
-        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 40
-    ) async throws -> StudioPage {
-        struct R: Decodable { let findStudios: StudioPage }
-        let q = """
-        query FindStudios($filter: FindFilterType!) {
-          findStudios(filter: $filter) {
-            count
-            studios {
-              id name url details image_path rating100
-              tags { id name }
-            }
-          }
-        }
-        """
-        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "name", "direction": "ASC"]
-        if !query.isEmpty { filter["q"] = query }
-        let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
-        return r.findStudios
-    }
-
-    static func studio(_ c: GraphQLClient, id: String) async throws -> Studio {
-        struct R: Decodable { let findStudio: Studio? }
-        let q = """
-        query FindStudio($id: ID!) {
-          findStudio(id: $id) {
-            id name url details image_path rating100
-            tags { id name }
-          }
-        }
-        """
-        let r: R = try await c.send(q, variables: ["id": id], as: R.self)
-        guard let s = r.findStudio else { throw StashAPIError.noData }
-        return s
-    }
-
-    /// 某工作室下的场景（详情页「相关场景」）
-    static func findScenesByStudio(
-        _ c: GraphQLClient, studioId: String, page: Int = 1, perPage: Int = 24
-    ) async throws -> ScenePage {
-        struct R: Decodable { let findScenes: ScenePage }
-        let q = """
-        query FindScenesByStudio($filter: FindFilterType!, $sf: SceneFilterType!) {
-          findScenes(filter: $filter, scene_filter: $sf) {
-            count
-            scenes {
-              id title details date rating100 o_counter
-              urls
-              studio { id name }
-              performers { id name }
-              tags { id name }
-              paths { screenshot webp }
-            }
-          }
-        }
-        """
-        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
-        let sf: [String: Any] = ["studios": ["value": [studioId], "modifier": "INCLUDES"]]
-        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
-        return r.findScenes
-    }
-
-    // MARK: 查询 - 标签
-
-    static func findTags(
-        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 120
-    ) async throws -> TagPage {
-        struct R: Decodable { let findTags: TagPage }
-        let q = """
-        query FindTags($filter: FindFilterType!) {
-          findTags(filter: $filter) {
-            count
-            tags { id name }
-          }
-        }
-        """
-        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "name", "direction": "ASC"]
-        if !query.isEmpty { filter["q"] = query }
-        let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
-        return r.findTags
-    }
-
-    /// 带某标签的场景（标签详情页）
-    static func findScenesByTag(
-        _ c: GraphQLClient, tagId: String, page: Int = 1, perPage: Int = 24
-    ) async throws -> ScenePage {
-        struct R: Decodable { let findScenes: ScenePage }
-        let q = """
-        query FindScenesByTag($filter: FindFilterType!, $sf: SceneFilterType!) {
-          findScenes(filter: $filter, scene_filter: $sf) {
-            count
-            scenes {
-              id title details date rating100 o_counter
-              urls
-              studio { id name }
-              performers { id name }
-              tags { id name }
-              paths { screenshot webp }
-            }
-          }
-        }
-        """
-        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
-        let sf: [String: Any] = ["tags": ["value": [tagId], "modifier": "INCLUDES"]]
-        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
-        return r.findScenes
-    }
-
     // MARK: 查询 - 演员
 
     static func findPerformers(
@@ -213,7 +103,80 @@ enum StashAPI {
         return p
     }
 
-    // MARK: 元数据来源（工作室 / 演员 / 标签 全量，供编辑器选择）
+    // MARK: 标签 / 工作室（跳转校验 + 关联短片）
+
+    /// 跳转前校验标签是否仍存在（被删的标签不再导航）
+    static func findTag(_ c: GraphQLClient, id: String) async throws -> Tag? {
+        struct R: Decodable { let findTag: Tag? }
+        return try await c.send("query FindTag($id: ID!) { findTag(id: $id) { id name } }",
+                                variables: ["id": id], as: R.self).findTag
+    }
+
+    static func findStudioByID(_ c: GraphQLClient, id: String) async throws -> Studio {
+        struct R: Decodable { let findStudio: Studio? }
+        let q = """
+        query FindStudio($id: ID!) {
+          findStudio(id: $id) { id name url details rating100 }
+        }
+        """
+        let r: R = try await c.send(q, variables: ["id": id], as: R.self)
+        guard let s = r.findStudio else { throw StashAPIError.noData }
+        return s
+    }
+
+    /// 某标签下的短片
+    static func findScenesByTag(
+        _ c: GraphQLClient, tagId: String, page: Int = 1, perPage: Int = 24
+    ) async throws -> ScenePage {
+        struct R: Decodable { let findScenes: ScenePage }
+        let q = """
+        query FindScenesByTag($filter: FindFilterType!, $sf: SceneFilterType!) {
+          findScenes(filter: $filter, scene_filter: $sf) {
+            count
+            scenes {
+              id title details date rating100 o_counter
+              urls
+              studio { id name }
+              performers { id name }
+              tags { id name }
+              paths { screenshot webp }
+            }
+          }
+        }
+        """
+        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        let sf: [String: Any] = ["tags": ["value": [tagId], "modifier": "INCLUDES"]]
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
+        return r.findScenes
+    }
+
+    /// 某工作室下的短片
+    static func findScenesByStudio(
+        _ c: GraphQLClient, studioId: String, page: Int = 1, perPage: Int = 24
+    ) async throws -> ScenePage {
+        struct R: Decodable { let findScenes: ScenePage }
+        let q = """
+        query FindScenesByStudio($filter: FindFilterType!, $sf: SceneFilterType!) {
+          findScenes(filter: $filter, scene_filter: $sf) {
+            count
+            scenes {
+              id title details date rating100 o_counter
+              urls
+              studio { id name }
+              performers { id name }
+              tags { id name }
+              paths { screenshot webp }
+            }
+          }
+        }
+        """
+        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        let sf: [String: Any] = ["studios": ["value": [studioId], "modifier": "INCLUDES"]]
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
+        return r.findScenes
+    }
+
+    // MARK: 元数据来源（演员 / 标签 全量，供编辑器选择）
 
     static func allStudios(_ c: GraphQLClient) async throws -> [Studio] {
         struct R: Decodable { let allStudios: [Studio] }
@@ -242,7 +205,7 @@ enum StashAPI {
     static func scrapers(_ c: GraphQLClient, kind: ScrapeKind) async throws -> [Scraper] {
         let typeName: String
         switch kind {
-        case .scene, .studio: typeName = "SCENE"
+        case .scene: typeName = "SCENE"
         case .performer: typeName = "PERFORMER"
         }
         struct R: Decodable { let listScrapers: [Scraper] }
@@ -272,11 +235,6 @@ enum StashAPI {
     }
 
     // MARK: 削刮选择集（与服务端 schema 逐字段核对过，勿加 id / image_path / career_length）
-
-    private static let scrapedStudioSelection = """
-    stored_id name urls image details aliases
-    tags { stored_id name }
-    """
 
     private static let scrapedSceneSelection = """
     title details date duration urls image
@@ -334,21 +292,6 @@ enum StashAPI {
         return r.scrapeSceneURL.map { [$0] } ?? []
     }
 
-    // MARK: 削刮 - 工作室（本套 Stash 仅支持 stash-box 源，按名称查询）
-
-    static func scrapeStudio(_ c: GraphQLClient, source: [String: Any], query: String) async throws -> [ScrapedStudio] {
-        struct R: Decodable { let scrapeSingleStudio: [ScrapedStudio?] }
-        let q = """
-        query ScrapeSingleStudio($source: ScraperSourceInput!, $input: ScrapeSingleStudioInput!) {
-          scrapeSingleStudio(source: $source, input: $input) { \(scrapedStudioSelection) }
-        }
-        """
-        let r: R = try await c.send(q, variables: [
-            "source": source, "input": ["query": query]
-        ], as: R.self)
-        return r.scrapeSingleStudio.compactMap { $0 }
-    }
-
     // MARK: 削刮 - 演员
 
     static func scrapePerformerFragment(_ c: GraphQLClient, source: [String: Any], performerId: String) async throws -> [ScrapedPerformer] {
@@ -389,6 +332,28 @@ enum StashAPI {
         return r.scrapePerformerURL.map { [$0] } ?? []
     }
 
+    // MARK: 短片合并（服务端原生 sceneMerge）
+
+    /// 将多个源短片合并进目标：演员/标签/文件等取并集，源条目删除（视频文件挂到目标），播放与 O 记录可选合并
+    static func mergeScenes(
+        _ c: GraphQLClient, sourceIds: [String], destinationId: String, includeHistory: Bool = true
+    ) async throws {
+        struct R: Decodable { let sceneMerge: IDOnly? }
+        struct IDOnly: Decodable { let id: String }
+        let q = """
+        mutation SceneMerge($input: SceneMergeInput!) {
+          sceneMerge(input: $input) { id }
+        }
+        """
+        var input: [String: Any] = ["source": sourceIds, "destination": destinationId]
+        if includeHistory {
+            input["play_history"] = true
+            input["o_history"] = true
+        }
+        let r: R = try await c.send(q, variables: ["input": input], as: R.self)
+        if r.sceneMerge == nil { throw StashAPIError.noData }
+    }
+
     // MARK: 元数据写回
 
     static func updateScene(_ c: GraphQLClient, input: SceneUpdateInput) async throws {
@@ -401,18 +366,6 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
         if r.sceneUpdate == nil { throw StashAPIError.noData }
-    }
-
-    static func updateStudio(_ c: GraphQLClient, input: StudioUpdateInput) async throws {
-        struct R: Decodable { let studioUpdate: IDOnly? }
-        struct IDOnly: Decodable { let id: String }
-        let q = """
-        mutation UpdateStudio($input: StudioUpdateInput!) {
-          studioUpdate(input: $input) { id }
-        }
-        """
-        let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
-        if r.studioUpdate == nil { throw StashAPIError.noData }
     }
 
     static func updatePerformer(_ c: GraphQLClient, input: PerformerUpdateInput) async throws {
@@ -505,20 +458,6 @@ enum StashAPI {
             }
             if let us = s.urls, !us.isEmpty { input.urls = us; changed += 1 }
             if changed > 0 { try await updateScene(c, input: input) }
-
-        case .studio(let st):
-            var input = StudioUpdateInput(id: targetID)
-            if let v = st.name, !v.isEmpty { input.name = v; changed += 1 }
-            if let v = st.details, !v.isEmpty { input.details = v; changed += 1 }
-            if let u = st.urls?.compactMap({ $0 }).first(where: { !$0.isEmpty }) {
-                input.url = u; changed += 1
-            }
-            if let ts = st.tags {
-                var ids: [String] = []
-                for t in ts { if let tid = try await resolveTagID(t) { ids.append(tid) } }
-                if !ids.isEmpty { input.tagIds = ids; changed += 1 }
-            }
-            if changed > 0 { try await updateStudio(c, input: input) }
 
         case .performer(let p):
             var input = PerformerUpdateInput(id: targetID)
