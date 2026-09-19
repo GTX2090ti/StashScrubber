@@ -184,11 +184,13 @@ struct SceneCard: View {
                 .font(.caption.weight(.medium))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-            // 工作室与日期合并为一行，减少卡片文字密度
-            Text([scene.studio?.name, scene.date].compactMap { $0 }.joined(separator: " · "))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            // 卡片仅显示日期（参考 Infuse 风格：标题 + 年份，工作室在详情页看）
+            if let d = scene.date {
+                Text(d)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 }
