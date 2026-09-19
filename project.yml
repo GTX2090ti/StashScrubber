@@ -40,6 +40,8 @@ targets:
       path: StashScrubber/Info.plist
       properties:
         CFBundleDisplayName: Stash 削刮
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         # 内网 HTTP 访问 Stash 必须放开 ATS
         NSAppTransportSecurity:
