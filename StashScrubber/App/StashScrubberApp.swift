@@ -335,7 +335,7 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.5.0")
+                    LabeledContent("版本", value: "1.5.1")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }

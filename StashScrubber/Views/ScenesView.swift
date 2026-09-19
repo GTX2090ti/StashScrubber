@@ -128,7 +128,7 @@ struct ScenesView: View {
         } else {
             ScrollView {
                 if viewMode == "grid" {
-                    // 紧凑网格：一排 3 个（iPhone），iPad 随宽度 5~7 列
+                    // 横版网格：一排 2 个 16:9 卡片，卡片排版与演员卡片同构
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
                         ForEach(vm.scenes) { s in
                             NavigationLink(value: s.id) {
@@ -176,12 +176,12 @@ struct SceneCard: View {
     let scene: Scene
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp)
                 .aspectRatio(16 / 9, contentMode: .fill)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             Text(scene.title ?? "（无标题）")
-                .font(.subheadline.weight(.semibold))
+                .font(.caption.weight(.medium))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
             HStack(spacing: 6) {
@@ -378,7 +378,7 @@ struct SceneDetailView: View {
         }
     }
 
-    // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 响应式适配
+    // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 布局与演员详情同构
     @ViewBuilder
     private func detail(_ s: Scene) -> some View {
         GeometryReader { geo in
@@ -387,13 +387,14 @@ struct SceneDetailView: View {
                 if wide {
                     HStack(alignment: .top, spacing: 24) {
                         imageColumn(s)
-                            .frame(width: geo.size.width * 0.42)
+                            .frame(width: min(420, geo.size.width * 0.45))
                         infoColumn(s)
                     }
                     .padding()
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
                         imageColumn(s)
+                            .frame(maxWidth: 360)
                         infoColumn(s)
                     }
                     .padding()
@@ -408,8 +409,9 @@ struct SceneDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    /// 与演员详情 infoColumn 同构：标题 + InfoRow 信息行（左标签 72pt + 右值）+ 详情文本 + Chip 分区
     private func infoColumn(_ s: Scene) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             // 标题（点击编辑，保存后实时更新）
             if editingTitle {
                 VStack(alignment: .leading, spacing: 8) {
@@ -443,55 +445,83 @@ struct SceneDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            // 文件路径（可选中 + 一键复制，成功提示）
-            if let path = s.files?.first?.path, !path.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("文件路径")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Button {
-                            UIPasteboard.general.string = path
-                            copiedPath = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                copiedPath = false
-                            }
-                        } label: {
-                            Label(copiedPath ? "已复制" : "复制",
-                                  systemImage: copiedPath ? "checkmark" : "doc.on.doc")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    Text(path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-                        if let st = s.studio {
+
+            // 信息行：工作室（可点击跳转，存在性校验见 openStudio）
+            if let st = s.studio {
                 Button {
                     Task { await openStudio(st) }
                 } label: {
-                    Label(st.name, systemImage: "building.2")
-                        .font(.subheadline)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("工作室")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 72, alignment: .leading)
+                        Label(st.name, systemImage: "building.2")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.appAccent)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
                 }
                 .buttonStyle(.plain)
             }
-            HStack(spacing: 14) {
-                if let d = s.date {
-                    Label(d, systemImage: "calendar")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                if let r = s.rating100 {
-                    Label(String(format: "%.1f", Double(r) / 20.0), systemImage: "star.fill")
-                        .font(.subheadline).foregroundStyle(.yellow)
-                }
-                if let o = s.oCounter, o > 0 {
-                    Label("\(o)", systemImage: "eye")
-                        .font(.subheadline).foregroundStyle(.secondary)
+            InfoRow(label: "日期", value: s.date)
+            if let r = s.rating100 {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("评分")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 72, alignment: .leading)
+                    Image(systemName: "star.fill")
+                        .font(.caption)
+                        .foregroundStyle(.yellow)
+                    Text(String(format: "%.1f / 5.0", Double(r) / 20.0))
+                        .font(.subheadline)
+                    Spacer(minLength: 0)
                 }
             }
+            if let o = s.oCounter, o > 0 {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("O 计数")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 72, alignment: .leading)
+                    Image(systemName: "eye")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(o)")
+                        .font(.subheadline)
+                    Spacer(minLength: 0)
+                }
+            }
+            // 文件路径（含一键复制，成功提示）
+            if let path = s.files?.first?.path, !path.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("文件路径")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 72, alignment: .leading)
+                    Text(path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                    Button {
+                        UIPasteboard.general.string = path
+                        copiedPath = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            copiedPath = false
+                        }
+                    } label: {
+                        Label(copiedPath ? "已复制" : "复制",
+                              systemImage: copiedPath ? "checkmark" : "doc.on.doc")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
             if let ds = s.details, !ds.isEmpty {
                 Text(ds)
                     .font(.callout)
