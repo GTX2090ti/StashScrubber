@@ -327,18 +327,6 @@ struct ScrapePreview: View {
                 }),
                 ("URL", existing.urls.joined(separator: " "), s.urls?.joined(separator: " ")),
             ]
-        case .studio(let st):
-            return [
-                ("名称", existing.title, st.name),
-                ("简介", existing.details, st.details),
-                ("别名", nil, st.aliases),
-                ("URL", existing.urls.joined(separator: " "), st.urls.flatMap { us in
-                    us.filter { !$0.isEmpty }.isEmpty ? nil : us.filter { !$0.isEmpty }.joined(separator: " ")
-                }),
-                ("标签", join(existing.tags), st.tags.flatMap { ts in
-                    ts.compactMap(\.name).isEmpty ? nil : ts.compactMap(\.name).joined(separator: "、")
-                }),
-            ]
         case .performer(let p):
             let career = [p.careerStart, p.careerEnd].compactMap { $0 }
                 .joined(separator: " - ")
