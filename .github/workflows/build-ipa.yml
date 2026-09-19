@@ -15,7 +15,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14   # Apple Silicon，Xcode 15/16 已预装
+    runs-on: macos-15   # 自带 Xcode 16，兼容 XcodeGen 2.46 生成的 objectVersion 77 工程格式
     steps:
       - name: Checkout
         uses: actions/checkout@v4
