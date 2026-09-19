@@ -129,7 +129,7 @@ struct ScenesView: View {
             ScrollView {
                 if viewMode == "grid" {
                     // 海报网格：一排固定 3 个竖版 2:3 海报卡片
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 18) {
                         ForEach(vm.scenes) { s in
                             NavigationLink(value: s.id) {
                                 SceneCard(scene: s)
@@ -176,7 +176,7 @@ struct SceneCard: View {
     let scene: Scene
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 8) {
             RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp, placeholderIcon: "film")
                 .aspectRatio(2 / 3, contentMode: .fill)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -184,18 +184,11 @@ struct SceneCard: View {
                 .font(.caption.weight(.medium))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-            HStack(spacing: 6) {
-                if let st = scene.studio {
-                    Text(st.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if let d = scene.date {
-                    Text(d).font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
+            // 工作室与日期合并为一行，减少卡片文字密度
+            Text([scene.studio?.name, scene.date].compactMap { $0 }.joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }
@@ -227,11 +220,8 @@ struct SceneRow: View {
                 }
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
     }
 }
@@ -390,14 +380,14 @@ struct SceneDetailView: View {
                             .frame(width: min(420, geo.size.width * 0.45))
                         infoColumn(s)
                     }
-                    .padding()
+                    .padding(20)
                 } else {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 20) {
                         imageColumn(s)
                             .frame(maxWidth: 360)
                         infoColumn(s)
                     }
-                    .padding()
+                    .padding(20)
                 }
             }
         }
@@ -411,7 +401,7 @@ struct SceneDetailView: View {
 
     /// 与演员详情 infoColumn 同构：标题 + InfoRow 信息行（左标签 72pt + 右值）+ 详情文本 + Chip 分区
     private func infoColumn(_ s: Scene) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             // 标题（点击编辑，保存后实时更新）
             if editingTitle {
                 VStack(alignment: .leading, spacing: 8) {
@@ -486,9 +476,6 @@ struct SceneDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(width: 72, alignment: .leading)
-                    Image(systemName: "eye")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     Text("\(o)")
                         .font(.subheadline)
                     Spacer(minLength: 0)
@@ -529,17 +516,17 @@ struct SceneDetailView: View {
                     .textSelection(.enabled)
             }
             if let ps = s.performers, !ps.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("演员").font(.subheadline.weight(.semibold))
-                    FlowLayout(spacing: 6) {
+                    FlowLayout(spacing: 8) {
                         ForEach(ps) { p in Chip(text: p.name) }
                     }
                 }
             }
             if let ts = s.tags, !ts.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("标签").font(.subheadline.weight(.semibold))
-                    FlowLayout(spacing: 6) {
+                    FlowLayout(spacing: 8) {
                         ForEach(ts) { t in
                             Button {
                                 Task { await openTag(t) }
@@ -552,7 +539,7 @@ struct SceneDetailView: View {
                 }
             }
             if let us = s.urls, !us.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("URL").font(.subheadline.weight(.semibold))
                     ForEach(us, id: \.self) { u in
                         if let url = URL(string: u) {

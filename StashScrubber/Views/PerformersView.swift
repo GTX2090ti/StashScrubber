@@ -65,7 +65,7 @@ struct PerformersView: View {
             EmptyStateView(title: "没有演员", hint: "下拉刷新，或检查服务器与过滤条件")
         } else {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 14) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 18) {
                     ForEach(vm.performers) { p in
                         NavigationLink(value: p.id) {
                             PerformerCard(performer: p)
@@ -96,7 +96,7 @@ struct PerformerCard: View {
     let performer: Performer
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 8) {
             RemoteImageView(urlString: performer.imagePath)
                 .frame(width: 120, height: 160)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -208,7 +208,7 @@ struct PerformerDetailView: View {
     }
 
     private func infoColumn(_ p: Performer) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             Text(p.name).font(.title2.weight(.bold))
             if let d = p.disambiguation {
                 Text(d).font(.subheadline).foregroundStyle(.secondary)
@@ -230,9 +230,9 @@ struct PerformerDetailView: View {
                 Text(ds).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
             }
             if let ts = p.tags, !ts.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("标签").font(.subheadline.weight(.semibold))
-                    FlowLayout(spacing: 6) {
+                    FlowLayout(spacing: 8) {
                         ForEach(ts) { t in Chip(text: t.name) }
                     }
                 }
