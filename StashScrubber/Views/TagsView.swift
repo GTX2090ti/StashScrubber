@@ -104,7 +104,7 @@ struct TagCard: View {
         HStack(spacing: 8) {
             Image(systemName: "tag")
                 .font(.caption)
-                .foregroundStyle(.appAccent)
+                .foregroundStyle(Color.appAccent)
             Text(tag.name)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(1)
@@ -141,7 +141,7 @@ struct TagDetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(spacing: 8) {
                             Image(systemName: "tag")
-                                .foregroundStyle(.appAccent)
+                                .foregroundStyle(Color.appAccent)
                             Text(tagName)
                                 .font(.title2.weight(.bold))
                         }

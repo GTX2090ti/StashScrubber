@@ -167,7 +167,7 @@ struct ExistingMeta: Hashable {
         date = nil
         birthdate = nil
         country = nil
-        studio = nil
+        self.studio = nil
         performers = []
         tags = studio.tags?.map(\.name) ?? []
         urls = studio.url.map { [$0] } ?? []
