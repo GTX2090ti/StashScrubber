@@ -1,13 +1,11 @@
 import Foundation
 import NetworkExtension
-import SystemConfiguration
 
 // MARK: - WiFi SSID 自动切换（内网 / 外网档案）
 //
-// SSID 获取优先级：
-// 1. NEHotspotNetwork.current（需 Access WiFi Information 能力，普通签名下常返回 nil）
-// 2. CNCopyCurrentNetworkInfo（需定位权限，Info.plist 已声明用途）
-// 两者都拿不到时在界面显示状态提示，用户仍可手动切换档案。
+// SSID 获取：NEHotspotNetwork.current，需 Access WiFi Information entitlement
+// （entitlements 已声明；AltStore 重签后若丢失该权限，运行时返回 nil，
+//  界面会显示「无法获取 SSID」提示，用户仍可手动切换档案）。
 
 struct SSIDRule: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
@@ -45,17 +43,9 @@ final class WiFiAutoSwitch: ObservableObject {
         }
     }
 
-    /// 当前 WiFi SSID（双通道探测，失败返回 nil）
+    /// 当前 WiFi SSID（需 Access WiFi Information 权限，失败返回 nil）
     static func currentSSID() -> String? {
         if let n = NEHotspotNetwork.current, !n.ssid.isEmpty { return n.ssid }
-        guard let ifaces = CNCopySupportedInterfaces() as? [String] else { return nil }
-        for iface in ifaces {
-            if let info = CNCopyCurrentNetworkInfo(iface as CFString) as? [String: Any],
-               let ssid = info[kCNNetworkInfoKeySSID as String] as? String,
-               !ssid.isEmpty {
-                return ssid
-            }
-        }
         return nil
     }
 

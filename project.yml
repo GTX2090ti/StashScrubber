@@ -16,6 +16,8 @@ settings:
     CURRENT_PROJECT_VERSION: "6"    # CI 构建时由 run number 自动覆盖
     CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: "NO"
+    # Access WiFi Information：NEHotspotNetwork.current 需要，SDK 按 entitlement 门控 API 可见性
+    CODE_SIGN_ENTITLEMENTS: StashScrubber/StashScrubber.entitlements
 
 # CI 使用的构建方案（GitHub Actions macOS runner 上 xcodebuild 需要 scheme）
 schemes:
