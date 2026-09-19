@@ -17,12 +17,13 @@ enum StashAPI {
 
     static func findScenes(
         _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 40,
-        sort: String = "date", direction: String = "DESC"
+        sort: String = "date", direction: String = "DESC",
+        sceneFilter: [String: Any]? = nil
     ) async throws -> ScenePage {
         struct R: Decodable { let findScenes: ScenePage }
         let q = """
-        query FindScenes($filter: FindFilterType!) {
-          findScenes(filter: $filter) {
+        query FindScenes($filter: FindFilterType!, $sf: SceneFilterType) {
+          findScenes(filter: $filter, scene_filter: $sf) {
             count
             scenes {
               id title details date rating100 o_counter
@@ -39,7 +40,7 @@ enum StashAPI {
             "page": page, "per_page": perPage, "sort": sort, "direction": direction
         ]
         if !query.isEmpty { filter["q"] = query }
-        let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sceneFilter ?? NSNull()], as: R.self)
         return r.findScenes
     }
 
@@ -54,6 +55,7 @@ enum StashAPI {
             performers { id name image_path birthdate details }
             tags { id name }
             paths { screenshot webp }
+            files { path }
           }
         }
         """

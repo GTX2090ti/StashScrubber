@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - 场景列表
 
@@ -11,6 +12,7 @@ final class SceneListViewModel: ObservableObject {
     @Published var total = 0
     @Published var sort: String = "date"
     @Published var direction: String = "DESC"
+    @Published var filter = SceneFilterState()
 
     private var page = 1
     private var lastQuery = ""
@@ -37,7 +39,8 @@ final class SceneListViewModel: ObservableObject {
             let p = try await StashAPI.findScenes(
                 client, query: lastQuery, page: page,
                 sort: lastSort.isEmpty ? sort : lastSort,
-                direction: lastDirection.isEmpty ? direction : lastDirection
+                direction: lastDirection.isEmpty ? direction : lastDirection,
+                sceneFilter: filter.toSceneFilter()
             )
             total = p.count
             if page == 1 { scenes = p.scenes } else { scenes += p.scenes }
@@ -52,6 +55,7 @@ struct ScenesView: View {
     @StateObject private var vm = SceneListViewModel()
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("scenes.viewMode") private var viewMode: String = "grid"   // grid=一排3个 / list=列表
+    @State private var showFilter = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +74,21 @@ struct ScenesView: View {
                         } label: {
                             Label(viewMode == "grid" ? "列表视图" : "网格视图",
                                   systemImage: viewMode == "grid" ? "list.bullet" : "square.grid.2x2")
+                        }
+                        Button {
+                            showFilter = true
+                        } label: {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                if vm.filter.activeCount > 0 {
+                                    Text("\(vm.filter.activeCount)")
+                                        .font(.caption2.weight(.bold))
+                                        .padding(3)
+                                        .background(Circle().fill(Color.red))
+                                        .foregroundStyle(.white)
+                                        .offset(x: 8, y: -8)
+                                }
+                            }
                         }
                         Menu {
                             Picker("排序", selection: $vm.sort) {
@@ -91,6 +110,11 @@ struct ScenesView: View {
                 }
                 .onChange(of: vm.sort) { _ in Task { await vm.reload() } }
                 .onChange(of: vm.direction) { _ in Task { await vm.reload() } }
+                .sheet(isPresented: $showFilter) {
+                    SceneFilterSheet(state: $vm.filter) {
+                        Task { await vm.reload() }
+                    }
+                }
         }
     }
 
@@ -153,7 +177,7 @@ struct SceneCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            RemoteImageView(urlString: scene.paths?.webp ?? scene.paths?.screenshot)
+            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp)
                 .frame(height: 100)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             Text(scene.title ?? "（无标题）")
@@ -182,7 +206,7 @@ struct SceneRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RemoteImageView(urlString: scene.paths?.webp ?? scene.paths?.screenshot)
+            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp)
                 .frame(width: 120, height: 68)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
@@ -222,6 +246,10 @@ struct SceneDetailView: View {
     @State private var error: String?
     @State private var showEdit = false
     @State private var showScrape = false
+    @State private var editingTitle = false
+    @State private var titleDraft = ""
+    @State private var savingTitle = false
+    @State private var copiedPath = false
 
     var body: some View {
         Group {
@@ -238,6 +266,9 @@ struct SceneDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: sceneID) { await load() }
         .errorAlert($error)
+        .navigationDestination(for: StudioNavID.self) { v in
+            StudioDetailView(studioID: v.id)
+        }
         .sheet(isPresented: $showEdit) {
             if let scene {
                 SceneEditView(scene: scene) { Task { await load() } }
@@ -280,6 +311,26 @@ struct SceneDetailView: View {
         }
     }
 
+    private func saveTitle() async {
+        let newTitle = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newTitle.isEmpty else {
+            editingTitle = false
+            return
+        }
+        savingTitle = true
+        defer { savingTitle = false }
+        do {
+            let client = try settings.makeClient()
+            var input = SceneUpdateInput(id: sceneID)
+            input.title = newTitle
+            try await StashAPI.updateScene(client, input: input)
+            scene?.title = newTitle   // 实时更新
+            editingTitle = false
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 响应式适配
     @ViewBuilder
     private func detail(_ s: Scene) -> some View {
@@ -305,19 +356,78 @@ struct SceneDetailView: View {
     }
 
     private func imageColumn(_ s: Scene) -> some View {
-        RemoteImageView(urlString: s.paths?.webp ?? s.paths?.screenshot)
+        RemoteImageView(urlString: s.paths?.screenshot ?? s.paths?.webp)
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private func infoColumn(_ s: Scene) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(s.title ?? "（无标题）")
-                .font(.title2.weight(.bold))
+            // 文件路径（可选中 + 一键复制，成功提示）
+            if let path = s.files?.first?.path, !path.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("文件路径")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button {
+                            UIPasteboard.general.string = path
+                            copiedPath = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                copiedPath = false
+                            }
+                        } label: {
+                            Label(copiedPath ? "已复制" : "复制",
+                                  systemImage: copiedPath ? "checkmark" : "doc.on.doc")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    Text(path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            // 标题（点击编辑，保存后实时更新）
+            if editingTitle {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("标题", text: $titleDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await saveTitle() } }
+                    HStack {
+                        Button("取消", role: .cancel) { editingTitle = false }
+                        Spacer()
+                        if savingTitle {
+                            ProgressView()
+                        } else {
+                            Button("保存") { Task { await saveTitle() } }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
+            } else {
+                Button {
+                    titleDraft = s.title ?? ""
+                    editingTitle = true
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(s.title ?? "（无标题）")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.primary)
+                        Image(systemName: "pencil.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
             if let st = s.studio {
-                Label(st.name, systemImage: "building.2")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                NavigationLink(value: StudioNavID(id: st.id)) {
+                    Label(st.name, systemImage: "building.2")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
             }
             HStack(spacing: 14) {
                 if let d = s.date {

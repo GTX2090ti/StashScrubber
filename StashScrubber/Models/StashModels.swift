@@ -57,11 +57,12 @@ struct Scene: Codable, Hashable, Identifiable {
     var performers: [Performer]?
     var tags: [Tag]?
     var paths: ScenePaths?
+    var files: [SceneFile]?
 
     enum CodingKeys: String, CodingKey {
         case id, title, details, date, rating100, urls
         case oCounter = "o_counter"
-        case studio, performers, tags, paths
+        case studio, performers, tags, paths, files
     }
 
     init(from decoder: Decoder) throws {
@@ -76,6 +77,7 @@ struct Scene: Codable, Hashable, Identifiable {
         performers = try c.decodeIfPresent([Performer].self, forKey: .performers)
         tags = try c.decodeIfPresent([Tag].self, forKey: .tags)
         paths = try c.decodeIfPresent(ScenePaths.self, forKey: .paths)
+        files = try c.decodeIfPresent([SceneFile].self, forKey: .files)
         // 该 Stash 实测 urls 为 [String] 纯字符串数组
         urls = try c.decodeIfPresent([String].self, forKey: .urls)
     }
@@ -84,6 +86,15 @@ struct Scene: Codable, Hashable, Identifiable {
 struct ScenePaths: Codable, Hashable {
     let screenshot: String?
     let webp: String?
+}
+
+struct SceneFile: Codable, Hashable {
+    let path: String?
+}
+
+/// 导航用途：场景详情 → 工作室详情（String 目的地在列表页已被场景占用，用包装类型区分）
+struct StudioNavID: Hashable {
+    let id: String
 }
 
 struct ScenePage: Codable {

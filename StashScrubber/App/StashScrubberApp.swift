@@ -5,10 +5,33 @@ import SwiftUI
 @main
 struct StashScrubberApp: App {
     // 注意：模块内自定义的 Scene 模型结构体会遮蔽 SwiftUI.Scene 协议，此处须全限定
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some SwiftUI.Scene {
         WindowGroup {
-            RootView()
+            RootGate()
                 .environmentObject(AppSettings.shared)
+                .environmentObject(AccountStore.shared)
+                .environmentObject(WiFiAutoSwitch.shared)
+                .onChange(of: scenePhase) { phase in
+                    if phase == .active {
+                        // 回到前台时按 WiFi 规则自动切换内外网档案
+                        WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
+                    }
+                }
+        }
+    }
+}
+
+// 登录门禁：未登录 / 会话过期时展示登录页
+struct RootGate: View {
+    @EnvironmentObject private var account: AccountStore
+
+    var body: some View {
+        if account.currentUser != nil {
+            RootView()
+        } else {
+            LoginView()
         }
     }
 }
@@ -208,6 +231,7 @@ struct ServerSwitcherMenu: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var account: AccountStore
     @State private var testing = false
     @State private var testResult: String?
     @State private var error: String?
@@ -293,8 +317,29 @@ struct SettingsView: View {
                     Text("连接")
                 }
 
+                Section {
+                    NavigationLink {
+                        WiFiRulesView()
+                    } label: {
+                        Label("WiFi 自动切换", systemImage: "wifi")
+                    }
+                } header: {
+                    Text("网络")
+                } footer: {
+                    Text("按 WiFi 名称（SSID）自动在内网/外网档案间切换，规则支持增删改；回到前台时自动检测。")
+                }
+
+                Section("账号") {
+                    LabeledContent("当前用户", value: account.currentUser ?? "-")
+                    Button(role: .destructive) {
+                        account.logout()
+                    } label: {
+                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+
                 Section("说明") {
-                    LabeledContent("版本", value: "1.0.0")
+                    LabeledContent("版本", value: "1.2.0")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }

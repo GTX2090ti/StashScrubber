@@ -97,7 +97,7 @@ struct StudioCard: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            RemoteImageView(urlString: studio.imagePath)
+            RemoteImageView(urlString: studio.imagePath, placeholderIcon: "building.2")
                 .frame(height: 100)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             Text(studio.name)
@@ -205,7 +205,7 @@ struct StudioDetailView: View {
     }
 
     private func imageColumn(_ s: Studio) -> some View {
-        RemoteImageView(urlString: s.imagePath)
+        RemoteImageView(urlString: s.imagePath, placeholderIcon: "building.2")
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }

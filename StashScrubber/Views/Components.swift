@@ -13,6 +13,7 @@ extension Color {
 
 struct RemoteImageView: View {
     let urlString: String?
+    var placeholderIcon: String = "photo"
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -24,7 +25,7 @@ struct RemoteImageView: View {
                     .resizable()
                     .scaledToFill()
             } else if failed {
-                Image(systemName: "photo")
+                Image(systemName: placeholderIcon)
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
             } else {
@@ -34,19 +35,46 @@ struct RemoteImageView: View {
         .task(id: urlString) { await load() }
     }
 
+    /// 服务端返回的图片是绝对地址（指向 Stash 本机 / 内网 IP）。
+    /// 当主机与当前档案不一致（例如外网反代档案）时，重写为「当前档案基址 + 原路径与查询参数」，
+    /// 保证内外网档案都能正确加载图片。
+    private func resolvedURL() -> URL? {
+        guard let s = urlString, !s.isEmpty,
+              var comps = URLComponents(string: s), comps.host != nil else { return nil }
+        guard let base = URL(string: AppSettings.shared.serverURL),
+              let baseComps = URLComponents(url: base, resolvingAgainstBaseURL: false),
+              baseComps.host != nil else { return comps.url }
+        if comps.host == baseComps.host && comps.port == baseComps.port {
+            return comps.url
+        }
+        var merged = baseComps
+        var basePath = baseComps.path
+        if basePath.hasSuffix("/") { basePath.removeLast() }
+        merged.path = basePath + comps.path
+        merged.queryItems = comps.queryItems
+        return merged.url
+    }
+
     private func load() async {
         image = nil
         failed = false
-        guard let s = urlString, !s.isEmpty, let url = URL(string: s) else {
+        guard let url = resolvedURL() else {
             failed = true
             return
         }
         var req = URLRequest(url: url)
         let key = AppSettings.shared.apiKey
         if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "ApiKey") }
+        req.timeoutInterval = 30
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
-            if let img = UIImage(data: data) { image = img } else { failed = true }
+            // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
+            // UIImage 无法解码这些格式 → 显示占位图标
+            if let img = UIImage(data: data) {
+                image = img
+            } else {
+                failed = true
+            }
         } catch {
             failed = true
         }
