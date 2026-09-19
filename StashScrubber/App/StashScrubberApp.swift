@@ -4,7 +4,8 @@ import SwiftUI
 
 @main
 struct StashScrubberApp: App {
-    var body: some Scene {
+    // 注意：模块内自定义的 Scene 模型结构体会遮蔽 SwiftUI.Scene 协议，此处须全限定
+    var body: some SwiftUI.Scene {
         WindowGroup {
             RootView()
                 .environmentObject(AppSettings.shared)
