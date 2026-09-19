@@ -56,6 +56,15 @@ struct ScenesView: View {
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("scenes.viewMode") private var viewMode: String = "grid"   // grid=一排3个 / list=列表
     @State private var showFilter = false
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+
+    /// iPhone（compact）固定 3 列；iPad（regular）自适应列宽约 140pt，自动排更多列
+    private var gridColumns: [GridItem] {
+        if hSizeClass == .regular {
+            return [GridItem(.adaptive(minimum: 140), spacing: 12)]
+        }
+        return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
 
     var body: some View {
         NavigationStack {
@@ -129,7 +138,7 @@ struct ScenesView: View {
             ScrollView {
                 if viewMode == "grid" {
                     // 海报网格：一排固定 3 个竖版 2:3 海报卡片
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 18) {
+                    LazyVGrid(columns: gridColumns, spacing: 18) {
                         ForEach(vm.scenes) { s in
                             NavigationLink(value: s.id) {
                                 SceneCard(scene: s)
