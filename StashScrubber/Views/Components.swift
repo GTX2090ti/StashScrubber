@@ -68,17 +68,16 @@ struct RemoteImageView: View {
         var req = URLRequest(url: url)
         let key = AppSettings.shared.apiKey
         if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "ApiKey") }
-        req.timeoutInterval = 30
+        req.timeoutInterval = 15
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
             // UIImage 无法解码这些格式 → 显示占位图标
             if let img = UIImage(data: data) {
                 if let aspect = smartCropAspect {
-                    // 智能裁剪是 CPU 密集操作（Vision 请求），移出主线程执行
-                    image = await Task.detached(priority: .userInitiated) {
-                        img.smartCropped(toAspect: aspect)
-                    }.value
+                    // 智能裁剪移出主线程；Vision 请求在部分 iOS 26 设备上会挂死
+                    //（ANECF 推理故障，重启 App 也无效），必须带超时熔断兜底
+                    image = await SmartCrop.run(img, aspect: aspect)
                 } else {
                     image = img
                 }
@@ -130,6 +129,29 @@ extension UIImage {
         return self
     }
 
+    /// 兜底裁剪：不用 Vision，横图窗口取偏上（人物头部常在上方 45% 处），竖图居中
+    func fallbackCropped(toAspect aspect: CGFloat) -> UIImage {
+        guard let cg = cgImage else { return self }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let currentAspect = w / h
+        if abs(currentAspect - aspect) < 0.02 { return self }
+        let cropW: CGFloat, cropH: CGFloat
+        if currentAspect > aspect {
+            cropH = h
+            cropW = h * aspect
+        } else {
+            cropW = w
+            cropH = w / aspect
+        }
+        let ox = (w - cropW) / 2
+        let oy = currentAspect > aspect ? (h - cropH) * 0.25 : (h - cropH) / 2
+        let rect = CGRect(x: ox, y: oy, width: cropW, height: cropH)
+        if let cropped = cg.cropping(to: rect) {
+            return UIImage(cgImage: cropped, scale: scale, orientation: .up)
+        }
+        return self
+    }
+
     /// 注意力显著性焦点（归一化 midX/midY，Vision 坐标系），无结果返回 nil
     private func saliencyFocus() -> CGRect? {
         guard let cg = cgImage else { return nil }
@@ -142,6 +164,53 @@ extension UIImage {
             return box
         } catch {
             return nil
+        }
+    }
+}
+
+// MARK: - 智能裁剪门面（超时熔断，保证图片必定出图）
+
+/// 原子一次性领取：保证续体只被 resume 一次（Vision 线程与超时回调赛跑）
+private final class ResumeOnce {
+    private let lock = NSLock()
+    private var claimed = false
+    /// 返回 true 表示领取成功（可且仅可 resume 一次）
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}
+
+enum SmartCrop {
+    private static let lock = NSLock()
+    /// 熔断标记：显著性请求一旦超时，判定该设备 Vision 推理不可用（iOS 26 ANECF 已知问题），后续全部走兜底
+    private static var broken = false
+
+    static func run(_ img: UIImage, aspect: CGFloat) async -> UIImage {
+        lock.lock()
+        let skip = broken
+        lock.unlock()
+        if skip { return img.fallbackCropped(toAspect: aspect) }
+
+        // 注意：不能用 TaskGroup 赛跑——组退出会隐式等待挂死的 Vision 子任务，超时失效。
+        // 改用续体 + 原子领取：超时回调先到先得，挂死任务被遗弃（broken 熔断后不再新增）。
+        return await withCheckedContinuation { cont in
+            let once = ResumeOnce()
+            Task.detached(priority: .userInitiated) {
+                let r = img.smartCropped(toAspect: aspect)
+                if once.claim() { cont.resume(returning: r) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                if once.claim() {
+                    lock.lock()
+                    broken = true
+                    lock.unlock()
+                    cont.resume(returning: img.fallbackCropped(toAspect: aspect))
+                }
+            }
         }
     }
 }

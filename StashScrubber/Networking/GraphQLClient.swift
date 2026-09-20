@@ -64,8 +64,8 @@ final class GraphQLClient {
         self.apiKey = (apiKey?.isEmpty == false) ? apiKey : nil
 
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 45   // 外网链路放宽超时
-        cfg.timeoutIntervalForResource = 120
+        cfg.timeoutIntervalForRequest = 20   // 外网弱网查询一般 <5s，20s 足够；太久会让失败显形太慢
+        cfg.timeoutIntervalForResource = 60
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: cfg)
     }
