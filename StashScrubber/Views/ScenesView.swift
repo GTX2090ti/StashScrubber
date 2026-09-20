@@ -177,6 +177,15 @@ struct ScenesView: View {
             .navigationDestination(for: String.self) { id in
                 SceneDetailView(sceneID: id)
             }
+            .navigationDestination(for: TagNavID.self) { t in
+                TagDetailView(tagID: t.id, tagName: t.name)
+            }
+            .navigationDestination(for: StudioNavID.self) { st in
+                StudioDetailView(studioID: st.id, studioName: st.name)
+            }
+            .navigationDestination(for: PerformerNavID.self) { pv in
+                PerformerDetailView(performerID: pv.id)
+            }
         }
     }
 }
@@ -263,12 +272,6 @@ struct SceneDetailView: View {
     @State private var titleDraft = ""
     @State private var savingTitle = false
     @State private var copiedPath = false
-    @State private var tagNav: TagNavID?
-    @State private var showTagDetail = false
-    @State private var performerNav: PerformerNavID?
-    @State private var showPerformerDetail = false
-    @State private var studioNav: StudioNavID?
-    @State private var showStudioDetail = false
     @State private var showMerge = false
 
     var body: some View {
@@ -286,15 +289,6 @@ struct SceneDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: sceneID) { await load() }
         .errorAlert($error)
-        .navigationDestination(isPresented: $showTagDetail) {
-            if let t = tagNav { TagDetailView(tagID: t.id, tagName: t.name) }
-        }
-        .navigationDestination(isPresented: $showStudioDetail) {
-            if let st = studioNav { StudioDetailView(studioID: st.id, studioName: st.name) }
-        }
-        .navigationDestination(isPresented: $showPerformerDetail) {
-            if let pf = performerNav { PerformerDetailView(performerID: pf.id) }
-        }
         .sheet(isPresented: $showMerge) {
             if let scene {
                 MergeSceneSheet(target: scene) { Task { await load() } }
@@ -367,24 +361,6 @@ struct SceneDetailView: View {
         }
     }
 
-    /// 点击标签：直接跳转（预检请求在弱网下徒增失败，详情页自带加载失败态）
-    private func openTag(_ t: Tag) {
-        tagNav = TagNavID(id: t.id, name: t.name)
-        showTagDetail = true
-    }
-
-    /// 点击工作室：直接跳转
-    private func openStudio(_ st: Studio) {
-        studioNav = StudioNavID(id: st.id, name: st.name)
-        showStudioDetail = true
-    }
-
-    /// 点击演员：直接跳转演员详情
-    private func openPerformer(_ pf: Performer) {
-        performerNav = PerformerNavID(id: pf.id, name: pf.name)
-        showPerformerDetail = true
-    }
-
     // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 布局与演员详情同构
     @ViewBuilder
     private func detail(_ s: Scene) -> some View {
@@ -453,11 +429,9 @@ struct SceneDetailView: View {
                 .buttonStyle(.plain)
             }
 
-            // 信息行：工作室（可点击跳转，存在性校验见 openStudio）
+            // 信息行：工作室（value 型链接直推，目的地统一注册在栈根）
             if let st = s.studio {
-                Button {
-                    openStudio(st)
-                } label: {
+                NavigationLink(value: StudioNavID(id: st.id, name: st.name)) {
                     HStack(alignment: .firstTextBaseline) {
                         Text("工作室")
                             .font(.subheadline)
@@ -537,9 +511,7 @@ struct SceneDetailView: View {
                     Text("演员").font(.subheadline.weight(.semibold))
                     FlowLayout(spacing: 8) {
                         ForEach(ps) { p in
-                            Button {
-                                openPerformer(p)
-                            } label: {
+                            NavigationLink(value: PerformerNavID(id: p.id, name: p.name)) {
                                 Chip(text: p.name)
                             }
                             .buttonStyle(.plain)
@@ -552,9 +524,7 @@ struct SceneDetailView: View {
                     Text("标签").font(.subheadline.weight(.semibold))
                     FlowLayout(spacing: 8) {
                         ForEach(ts) { t in
-                            Button {
-                                openTag(t)
-                            } label: {
+                            NavigationLink(value: TagNavID(id: t.id, name: t.name)) {
                                 Chip(text: t.name)
                             }
                             .buttonStyle(.plain)

@@ -91,6 +91,12 @@ struct PerformersView: View {
             .navigationDestination(for: PerformerNavID.self) { pv in
                 PerformerDetailView(performerID: pv.id)
             }
+            .navigationDestination(for: TagNavID.self) { t in
+                TagDetailView(tagID: t.id, tagName: t.name)
+            }
+            .navigationDestination(for: StudioNavID.self) { st in
+                StudioDetailView(studioID: st.id, studioName: st.name)
+            }
         }
     }
 }
