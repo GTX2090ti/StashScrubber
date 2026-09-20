@@ -316,6 +316,11 @@ struct SettingsView: View {
                     } label: {
                         Label("WiFi 自动切换", systemImage: "wifi")
                     }
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("网络诊断", systemImage: "stethoscope")
+                    }
                 } header: {
                     Text("网络")
                 } footer: {
@@ -335,7 +340,7 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.5.8")
+                    LabeledContent("版本", value: "1.5.9")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }

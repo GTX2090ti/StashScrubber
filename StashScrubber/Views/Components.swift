@@ -20,6 +20,17 @@ struct RemoteImageView: View {
     @State private var image: UIImage?
     @State private var failed = false
 
+    /// 图片专用会话：resource 超时是「总时长」上限（request 超时只是空闲计时，慢速滴流会一直续命），
+    /// 30s 封底保证任何情况下转圈都会结束
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForResource = 30
+        cfg.waitsForConnectivity = false
+        cfg.httpMaximumConnectionsPerHost = 6
+        return URLSession(configuration: cfg)
+    }()
+
     var body: some View {
         ZStack {
             Rectangle().fill(Color(UIColor.tertiarySystemFill))
@@ -68,9 +79,8 @@ struct RemoteImageView: View {
         var req = URLRequest(url: url)
         let key = AppSettings.shared.apiKey
         if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "ApiKey") }
-        req.timeoutInterval = 15
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, _) = try await Self.session.data(for: req)
             // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
             // UIImage 无法解码这些格式 → 显示占位图标
             if let img = UIImage(data: data) {
@@ -85,7 +95,10 @@ struct RemoteImageView: View {
                 failed = true
             }
         } catch {
-            failed = true
+            // 视图复用 / 页面切换导致的任务取消：静默保持原状，不算失败
+            if !(error is CancellationError), !(error is URLError && (error as! URLError).code == .cancelled) {
+                failed = true
+            }
         }
     }
 }
@@ -370,18 +383,29 @@ struct MultiSelectSheet: View {
 struct ErrorAlert: ViewModifier {
     @Binding var message: String?
 
+    /// 取消噪音：导航 / 切标签页取消 .task 时 URLSession 报 cancelled，不是真错误
+    private static func isNoise(_ m: String) -> Bool {
+        let low = m.lowercased()
+        return low == "cancelled" || low.contains("已取消")
+    }
+
     func body(content: Content) -> some View {
-        content.alert(
-            "操作失败",
-            isPresented: Binding(
-                get: { message != nil },
-                set: { if !$0 { message = nil } }
-            )
-        ) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(message ?? "")
-        }
+        content
+            .alert(
+                "操作失败",
+                isPresented: Binding(
+                    get: { message != nil && !Self.isNoise(message ?? "") },
+                    set: { if !$0 { message = nil } }
+                )
+            ) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(message ?? "")
+            }
+            .onChange(of: message) { m in
+                // 噪音消息直接清掉，避免堵住后续真错误的弹窗
+                if let m, Self.isNoise(m) { message = nil }
+            }
     }
 }
 
