@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Vision
 
 // MARK: - 主题：苹果原生，不强制外观，跟随系统浅色/深色模式
 // 配色一律使用系统语义色，强调色使用系统默认 accentColor
@@ -14,6 +15,8 @@ extension Color {
 struct RemoteImageView: View {
     let urlString: String?
     var placeholderIcon: String = "photo"
+    /// 非 nil 时按该宽高比（如 2/3）对原图做智能裁剪：Vision 显著性找焦点，窗口对齐焦点
+    var smartCropAspect: CGFloat? = nil
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -71,12 +74,74 @@ struct RemoteImageView: View {
             // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
             // UIImage 无法解码这些格式 → 显示占位图标
             if let img = UIImage(data: data) {
-                image = img
+                if let aspect = smartCropAspect {
+                    // 智能裁剪是 CPU 密集操作（Vision 请求），移出主线程执行
+                    image = await Task.detached(priority: .userInitiated) {
+                        img.smartCropped(toAspect: aspect)
+                    }.value
+                } else {
+                    image = img
+                }
             } else {
                 failed = true
             }
         } catch {
             failed = true
+        }
+    }
+}
+
+// MARK: - 智能裁剪（横版截图 -> 竖版海报时自动选取主体区域）
+
+extension UIImage {
+    /// 按目标宽高比裁剪：Vision 注意力显著性检测定位主体焦点，裁剪窗口对齐焦点；
+    /// 检测失败时回退：横图略偏上居中（人物头部常在上方），竖图居中。
+    func smartCropped(toAspect aspect: CGFloat) -> UIImage {
+        guard let cg = cgImage, orientation == .up else { return self }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let currentAspect = w / h
+        if abs(currentAspect - aspect) < 0.02 { return self }
+
+        let cropW: CGFloat, cropH: CGFloat
+        if currentAspect > aspect {   // 原图偏宽（16:9 -> 2:3）：窗口窄高，占满高
+            cropH = h
+            cropW = h * aspect
+        } else {                      // 原图偏高：窗口宽扁，占满宽
+            cropW = w
+            cropH = w / aspect
+        }
+
+        // 默认焦点：横图偏上（45% 高度处），竖图居中
+        var fx = w / 2
+        var fy = currentAspect > aspect ? h * 0.45 : h / 2
+
+        // Vision 显著性检测：取第一个显著区域中心作为焦点（归一化坐标原点在左下，需翻转 Y）
+        if let obs = saliencyFocus() {
+            fx = obs.midX * w
+            fy = (1 - obs.midY) * h
+        }
+
+        let ox = min(max(fx - cropW / 2, 0), w - cropW)
+        let oy = min(max(fy - cropH / 2, 0), h - cropH)
+        let rect = CGRect(x: ox, y: oy, width: cropW, height: cropH)
+        if let cropped = cg.cropping(to: rect) {
+            return UIImage(cgImage: cropped, scale: scale, orientation: .up)
+        }
+        return self
+    }
+
+    /// 注意力显著性焦点（归一化 midX/midY，Vision 坐标系），无结果返回 nil
+    private func saliencyFocus() -> CGRect? {
+        guard let cg = cgImage else { return nil }
+        let request = VNGenerateAttentionBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        do {
+            try handler.perform([request])
+            guard let obs = request.results?.first as? VNSaliencyImageObservation,
+                  let box = obs.salientObjects.first?.boundingBox else { return nil }
+            return box
+        } catch {
+            return nil
         }
     }
 }

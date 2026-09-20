@@ -176,6 +176,32 @@ enum StashAPI {
         return r.findScenes
     }
 
+    /// 某演员出演的短片
+    static func findScenesByPerformer(
+        _ c: GraphQLClient, performerId: String, page: Int = 1, perPage: Int = 24
+    ) async throws -> ScenePage {
+        struct R: Decodable { let findScenes: ScenePage }
+        let q = """
+        query FindScenesByPerformer($filter: FindFilterType!, $sf: SceneFilterType!) {
+          findScenes(filter: $filter, scene_filter: $sf) {
+            count
+            scenes {
+              id title details date rating100 o_counter
+              urls
+              studio { id name }
+              performers { id name }
+              tags { id name }
+              paths { screenshot webp }
+            }
+          }
+        }
+        """
+        let filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "date", "direction": "DESC"]
+        let sf: [String: Any] = ["performers": ["value": [performerId], "modifier": "INCLUDES"]]
+        let r: R = try await c.send(q, variables: ["filter": filter, "sf": sf], as: R.self)
+        return r.findScenes
+    }
+
     // MARK: 元数据来源（演员 / 标签 全量，供编辑器选择）
 
     static func allStudios(_ c: GraphQLClient) async throws -> [Studio] {

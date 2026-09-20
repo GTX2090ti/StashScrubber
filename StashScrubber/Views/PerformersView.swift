@@ -121,6 +121,11 @@ struct PerformerDetailView: View {
     @State private var error: String?
     @State private var showEdit = false
     @State private var showScrape = false
+    // 出演作品（该演员关联的短片，SenPlayer 风格网格）
+    @State private var scenes: [Scene] = []
+    @State private var sceneCount = 0
+    @State private var scenesLoading = false
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     var body: some View {
         Group {
@@ -135,7 +140,10 @@ struct PerformerDetailView: View {
         }
         .navigationTitle(performer?.name ?? "演员")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: performerID) { await load() }
+        .task(id: performerID) {
+            await load()
+            await reloadScenes()
+        }
         .errorAlert($error)
         .sheet(isPresented: $showEdit) {
             if let performer {
@@ -179,31 +187,102 @@ struct PerformerDetailView: View {
         }
     }
 
+    /// 出演作品网格：iPhone 两列，iPad 自适应列宽约 160pt（与短片页同策略）
+    private var sceneGridColumns: [GridItem] {
+        if hSizeClass == .regular {
+            return [GridItem(.adaptive(minimum: 160), spacing: 12)]
+        }
+        return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
+
     @ViewBuilder
     private func detail(_ p: Performer) -> some View {
         GeometryReader { geo in
             let wide = geo.size.width > 700
             ScrollView {
                 if wide {
-                    HStack(alignment: .top, spacing: 24) {
-                        RemoteImageView(urlString: p.imagePath)
-                            .frame(width: min(300, geo.size.width * 0.3))
-                            .aspectRatio(3 / 4, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        infoColumn(p)
+                    VStack(alignment: .leading, spacing: 20) {
+                        HStack(alignment: .top, spacing: 24) {
+                            RemoteImageView(urlString: p.imagePath)
+                                .frame(width: min(300, geo.size.width * 0.3))
+                                .aspectRatio(3 / 4, contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            infoColumn(p)
+                        }
+                        scenesSection
                     }
-                    .padding()
+                    .padding(20)
                 } else {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 20) {
                         RemoteImageView(urlString: p.imagePath)
                             .frame(maxWidth: 280)
                             .aspectRatio(3 / 4, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         infoColumn(p)
+                        scenesSection
                     }
-                    .padding()
+                    .padding(20)
                 }
             }
+        }
+    }
+
+    /// 出演作品分区：SenPlayer 风格卡片网格 + 加载更多
+    @ViewBuilder
+    private var scenesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("出演作品（\(sceneCount)）")
+                .font(.subheadline.weight(.semibold))
+            if scenes.isEmpty && scenesLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+            } else if scenes.isEmpty {
+                Text("没有关联短片")
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            } else {
+                LazyVGrid(columns: sceneGridColumns, spacing: 18) {
+                    ForEach(scenes) { sc in
+                        NavigationLink(value: sc.id) {
+                            SceneCard(scene: sc)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if sceneCount > scenes.count {
+                    Button {
+                        Task { await loadMoreScenes() }
+                    } label: {
+                        if scenesLoading { ProgressView() }
+                        else { Label("加载更多", systemImage: "arrow.down.circle") }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
+    private func reloadScenes() async {
+        scenes = []
+        await loadMoreScenes()
+    }
+
+    private func loadMoreScenes() async {
+        guard !scenesLoading else { return }
+        scenesLoading = true
+        defer { scenesLoading = false }
+        do {
+            let client = try settings.makeClient()
+            let page = scenes.count / 24 + 1
+            let p = try await StashAPI.findScenesByPerformer(client, performerId: performerID, page: page)
+            sceneCount = p.count
+            scenes += p.scenes
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

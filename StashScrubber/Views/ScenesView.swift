@@ -185,18 +185,30 @@ struct SceneCard: View {
     let scene: Scene
 
     var body: some View {
-        VStack(spacing: 8) {
-            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp, placeholderIcon: "film")
+        // SenPlayer 风格：文字左对齐，标题加粗一行，下方仅年份
+        VStack(alignment: .leading, spacing: 6) {
+            RemoteImageView(urlString: scene.paths?.screenshot ?? scene.paths?.webp, placeholderIcon: "film", smartCropAspect: 2.0 / 3.0)
                 .aspectRatio(2 / 3, contentMode: .fill)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(alignment: .bottomTrailing) {
+                    // 海报右下角评分角标（半透明黑底白字，如 8.2），无评分不显示
+                    if let r = scene.rating100 {
+                        Text(String(format: "%.1f", Double(r) / 20.0))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
+                            .padding(6)
+                    }
+                }
             Text(scene.title ?? "（无标题）")
-                .font(.caption.weight(.medium))
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-            // 卡片仅显示日期（参考 Infuse 风格：标题 + 年份，工作室在详情页看）
             if let d = scene.date {
-                Text(d)
-                    .font(.caption2)
+                Text(String(d.prefix(4)))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
