@@ -185,7 +185,7 @@ struct DiagnosticsView: View {
         let t0 = Date()
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
-            let out = ProbeOut(status: (resp as? HTTPURLResponse)?.statusCode,
+            var out = ProbeOut(status: (resp as? HTTPURLResponse)?.statusCode,
                                raw: data,
                                latency: Date().timeIntervalSince(t0))
             // 摘要：Stash 版本或 GraphQL 错误信息
@@ -209,9 +209,10 @@ struct DiagnosticsView: View {
     private static nonisolated func firstScreenshot(_ data: Data?) -> String? {
         guard let data else { return nil }
         struct R: Decodable {
-            struct D: Decodable { struct S: Decodable { let paths: P? }; struct P: Decodable { let screenshot: String? } }
-            let findScenes: F?
+            struct P: Decodable { let screenshot: String? }
+            struct S: Decodable { let paths: P? }
             struct F: Decodable { let scenes: [S]? }
+            let findScenes: F?
         }
         guard let r = try? JSONDecoder().decode(R.self, from: data) else { return nil }
         return r.findScenes?.scenes?.first?.paths?.screenshot
