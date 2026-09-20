@@ -60,7 +60,7 @@ enum StashAPI {
         }
         """
         let r: R = try await c.send(q, variables: ["id": id], as: R.self)
-        guard let s = r.findScene else { throw StashAPIError.noData }
+        guard let s = r.findScene else { throw StashAPIError.notFound("scene " + id) }
         return s
     }
 
@@ -99,7 +99,7 @@ enum StashAPI {
         }
         """
         let r: R = try await c.send(q, variables: ["id": id], as: R.self)
-        guard let p = r.findPerformer else { throw StashAPIError.noData }
+        guard let p = r.findPerformer else { throw StashAPIError.notFound("performer " + id) }
         return p
     }
 
@@ -120,7 +120,7 @@ enum StashAPI {
         }
         """
         let r: R = try await c.send(q, variables: ["id": id], as: R.self)
-        guard let s = r.findStudio else { throw StashAPIError.noData }
+        guard let s = r.findStudio else { throw StashAPIError.notFound("studio " + id) }
         return s
     }
 
@@ -377,7 +377,7 @@ enum StashAPI {
             input["o_history"] = true
         }
         let r: R = try await c.send(q, variables: ["input": input], as: R.self)
-        if r.sceneMerge == nil { throw StashAPIError.noData }
+        if r.sceneMerge == nil { throw StashAPIError.notFound("sceneMerge") }
     }
 
     // MARK: 元数据写回
@@ -391,7 +391,7 @@ enum StashAPI {
         }
         """
         let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
-        if r.sceneUpdate == nil { throw StashAPIError.noData }
+        if r.sceneUpdate == nil { throw StashAPIError.notFound("sceneUpdate") }
     }
 
     static func updatePerformer(_ c: GraphQLClient, input: PerformerUpdateInput) async throws {
@@ -403,7 +403,7 @@ enum StashAPI {
         }
         """
         let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
-        if r.performerUpdate == nil { throw StashAPIError.noData }
+        if r.performerUpdate == nil { throw StashAPIError.notFound("performerUpdate") }
     }
 
     // MARK: 实体创建（削刮结果中出现库里没有的 演员/标签/工作室 时调用）
@@ -505,7 +505,7 @@ enum StashAPI {
         }
 
         if changed == 0 {
-            throw StashAPIError.noData // 无字段可写
+            throw StashAPIError.notFound("无字段可写")
         }
         return changed
     }

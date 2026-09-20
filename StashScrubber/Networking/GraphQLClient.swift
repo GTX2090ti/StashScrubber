@@ -10,7 +10,8 @@ enum StashAPIError: LocalizedError {
     case badURL(String)
     case http(Int, String)
     case server([String])
-    case noData
+    case notFound(String)
+    case noData(status: Int?, body: String)
     case decoding(String)
 
     var errorDescription: String? {
@@ -24,8 +25,11 @@ enum StashAPIError: LocalizedError {
             return "HTTP \(code)：\(body.prefix(200))"
         case .server(let msgs):
             return "Stash 返回错误：\n" + msgs.joined(separator: "\n")
-        case .noData:
-            return "响应为空，请检查服务地址是否指向 Stash"
+        case .notFound(let what):
+            return "未找到：\(what)"
+        case .noData(let status, let body):
+            let snippet = body.isEmpty ? "(空响应体)" : String(body.prefix(300))
+            return "响应无 data 节点（HTTP \(status.map(String.init) ?? "?")）：服务可能不是 Stash。响应体：\(snippet)"
         case .decoding(let detail):
             return "数据解析失败：\(detail)"
         }
@@ -97,7 +101,9 @@ final class GraphQLClient {
             throw StashAPIError.server(errs.map(\.message))
         }
         guard let d = env.data else {
-            throw StashAPIError.noData
+            let status = (resp as? HTTPURLResponse)?.statusCode
+            let text = String(data: data, encoding: .utf8) ?? ""
+            throw StashAPIError.noData(status: status, body: text)
         }
         return d
     }

@@ -98,6 +98,11 @@ struct TagNavID: Hashable {
     let name: String
 }
 
+struct PerformerNavID: Hashable {
+    let id: String
+    let name: String
+}
+
 struct StudioNavID: Hashable {
     let id: String
     let name: String

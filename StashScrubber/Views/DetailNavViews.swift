@@ -66,11 +66,7 @@ struct TagDetailView: View {
         .navigationTitle(tagName)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: tagID) { await reload() }
-        .errorAlert($error)
-        .navigationDestination(for: String.self) { id in
-            SceneDetailView(sceneID: id)
-        }
-    }
+        .errorAlert($error)    }
 
     private func reload() async {
         scenes = []
@@ -182,11 +178,7 @@ struct StudioDetailView: View {
         .navigationTitle(studio?.name ?? studioName)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: studioID) { await reload() }
-        .errorAlert($error)
-        .navigationDestination(for: String.self) { id in
-            SceneDetailView(sceneID: id)
-        }
-    }
+        .errorAlert($error)    }
 
     private func reload() async {
         scenes = []

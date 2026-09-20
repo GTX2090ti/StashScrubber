@@ -265,6 +265,8 @@ struct SceneDetailView: View {
     @State private var copiedPath = false
     @State private var tagNav: TagNavID?
     @State private var showTagDetail = false
+    @State private var performerNav: PerformerNavID?
+    @State private var showPerformerDetail = false
     @State private var studioNav: StudioNavID?
     @State private var showStudioDetail = false
     @State private var showMerge = false
@@ -289,6 +291,9 @@ struct SceneDetailView: View {
         }
         .navigationDestination(isPresented: $showStudioDetail) {
             if let st = studioNav { StudioDetailView(studioID: st.id, studioName: st.name) }
+        }
+        .navigationDestination(isPresented: $showPerformerDetail) {
+            if let pf = performerNav { PerformerDetailView(performerID: pf.id) }
         }
         .sheet(isPresented: $showMerge) {
             if let scene {
@@ -362,33 +367,22 @@ struct SceneDetailView: View {
         }
     }
 
-    /// 点击标签：先校验 Stash 中是否仍存在，再跳转标签详情
-    private func openTag(_ t: Tag) async {
-        do {
-            let client = try settings.makeClient()
-            guard try await StashAPI.findTag(client, id: t.id) != nil else {
-                error = "「\(t.name)」在 Stash 中已不存在（可能已被删除），无法打开标签详情"
-                return
-            }
-            tagNav = TagNavID(id: t.id, name: t.name)
-            showTagDetail = true
-        } catch {
-            self.error = error.localizedDescription
-        }
+    /// 点击标签：直接跳转（预检请求在弱网下徒增失败，详情页自带加载失败态）
+    private func openTag(_ t: Tag) {
+        tagNav = TagNavID(id: t.id, name: t.name)
+        showTagDetail = true
     }
 
-    /// 点击工作室：先校验是否仍存在，再跳转工作室详情
-    private func openStudio(_ st: Studio) async {
-        do {
-            let client = try settings.makeClient()
-            _ = try await StashAPI.findStudioByID(client, id: st.id)   // 不存在会抛 noData
-            studioNav = StudioNavID(id: st.id, name: st.name)
-            showStudioDetail = true
-        } catch StashAPIError.noData {
-            error = "「\(st.name)」在 Stash 中已不存在（可能已被删除），无法打开工作室详情"
-        } catch {
-            self.error = error.localizedDescription
-        }
+    /// 点击工作室：直接跳转
+    private func openStudio(_ st: Studio) {
+        studioNav = StudioNavID(id: st.id, name: st.name)
+        showStudioDetail = true
+    }
+
+    /// 点击演员：直接跳转演员详情
+    private func openPerformer(_ pf: Performer) {
+        performerNav = PerformerNavID(id: pf.id, name: pf.name)
+        showPerformerDetail = true
     }
 
     // 宽屏（iPad 横屏）左右双栏，窄屏上下堆叠 —— 布局与演员详情同构
@@ -462,7 +456,7 @@ struct SceneDetailView: View {
             // 信息行：工作室（可点击跳转，存在性校验见 openStudio）
             if let st = s.studio {
                 Button {
-                    Task { await openStudio(st) }
+                    openStudio(st)
                 } label: {
                     HStack(alignment: .firstTextBaseline) {
                         Text("工作室")
@@ -542,7 +536,14 @@ struct SceneDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("演员").font(.subheadline.weight(.semibold))
                     FlowLayout(spacing: 8) {
-                        ForEach(ps) { p in Chip(text: p.name) }
+                        ForEach(ps) { p in
+                            Button {
+                                openPerformer(p)
+                            } label: {
+                                Chip(text: p.name)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -552,7 +553,7 @@ struct SceneDetailView: View {
                     FlowLayout(spacing: 8) {
                         ForEach(ts) { t in
                             Button {
-                                Task { await openTag(t) }
+                                openTag(t)
                             } label: {
                                 Chip(text: t.name)
                             }

@@ -67,7 +67,7 @@ struct PerformersView: View {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 18) {
                     ForEach(vm.performers) { p in
-                        NavigationLink(value: p.id) {
+                        NavigationLink(value: PerformerNavID(id: p.id, name: p.name)) {
                             PerformerCard(performer: p)
                         }
                         .buttonStyle(.plain)
@@ -86,7 +86,10 @@ struct PerformersView: View {
                 }
             }
             .navigationDestination(for: String.self) { id in
-                PerformerDetailView(performerID: id)
+                SceneDetailView(sceneID: id)
+            }
+            .navigationDestination(for: PerformerNavID.self) { pv in
+                PerformerDetailView(performerID: pv.id)
             }
         }
     }
