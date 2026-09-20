@@ -113,6 +113,14 @@ enum ScrapedItem: Hashable, Identifiable {
         }
     }
 
+    /// 原始图片引用（URL 或 base64 data URI 均可，供「应用图片」判断）
+    var rawImageRef: String? {
+        switch self {
+        case .scene(let s): return s.image.flatMap { $0.isEmpty ? nil : $0 }
+        case .performer(let p): return p.images?.first(where: { !$0.isEmpty })
+        }
+    }
+
     /// 仅展示可远程加载的 URL 图片（base64 结果不在此预览）
     var imageURLString: String? {
         func httpOnly(_ s: String?) -> String? {

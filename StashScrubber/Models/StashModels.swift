@@ -171,6 +171,7 @@ struct SceneUpdateInput: Encodable {
     var performerIds: [String]?
     var tagIds: [String]?
     var urls: [String]?
+    var coverImage: String?   // base64 data URI（cover_image，snakeCase 自动转换）
 }
 
 struct PerformerUpdateInput: Encodable {
@@ -185,4 +186,5 @@ struct PerformerUpdateInput: Encodable {
     var careerLength: String?
     var rating100: Int?
     var tagIds: [String]?
+    var image: String?   // base64 data URI
 }

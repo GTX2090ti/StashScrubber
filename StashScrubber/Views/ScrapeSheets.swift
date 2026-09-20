@@ -309,6 +309,7 @@ struct ScrapePreview: View {
     @Environment(\.dismiss) private var dismiss
     @State private var applying = false
     @State private var error: String?
+    @State private var includeImage = true
 
     private var rows: [(label: String, current: String?, new: String?)] {
         func join(_ a: [String]) -> String? { a.isEmpty ? nil : a.joined(separator: "、") }
@@ -362,6 +363,13 @@ struct ScrapePreview: View {
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .listRowInsets(EdgeInsets())
+                        if item.rawImageRef != nil {
+                            Toggle("同时应用图片", isOn: $includeImage)
+                        }
+                    }
+                } else if item.rawImageRef != nil {
+                    Section {
+                        Toggle("同时应用图片（base64 图源无法预览）", isOn: $includeImage)
                     }
                 }
                 Section {
@@ -388,7 +396,7 @@ struct ScrapePreview: View {
                 } header: {
                     Text("将写入 \(changedRows.count) 个字段")
                 } footer: {
-                    Text("空字段不会写入，库内不存在的演员/标签/工作室将自动创建。")
+                    Text("空字段不会写入，库内不存在的演员/标签/工作室将自动创建。开启「应用图片」时会把刮削到的图片下载后转为 base64 写入（短片→封面，演员→头像），下载失败不影响其余字段。")
                 }
             }
             .navigationTitle("削刮结果")
@@ -404,7 +412,7 @@ struct ScrapePreview: View {
                         Button("应用并写回") {
                             Task { await apply() }
                         }
-                        .disabled(changedRows.isEmpty)
+                        .disabled(changedRows.isEmpty && !(includeImage && item.rawImageRef != nil))
                     }
                 }
             }
@@ -417,7 +425,7 @@ struct ScrapePreview: View {
         defer { applying = false }
         do {
             let client = try settings.makeClient()
-            _ = try await StashAPI.applyScraped(client, item: item, targetID: targetID)
+            _ = try await StashAPI.applyScraped(client, item: item, targetID: targetID, includeImage: includeImage)
             onApplied()
         } catch {
             self.error = error.localizedDescription

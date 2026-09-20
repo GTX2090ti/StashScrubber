@@ -272,7 +272,7 @@ enum StashAPI {
 
     private static let scrapedPerformerSelection = """
     stored_id name disambiguation birthdate details country ethnicity measurements
-    career_start career_end urls
+    career_start career_end urls images
     tags { stored_id name }
     """
 
@@ -440,11 +440,38 @@ enum StashAPI {
 
     // MARK: 削刮结果回写（核心流程）
 
+    /// 图片下载会话（外站图片 URL → base64；独立短超时，失败不影响文字字段）
+    private static let imageSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForResource = 20
+        return URLSession(configuration: cfg)
+    }()
+
+    /// 把刮削结果里的图片引用（URL 或 data URI）转为 Stash 接受的 base64 data URI；失败返回 nil
+    static func fetchImageAsBase64(_ ref: String) async -> String? {
+        if ref.hasPrefix("data:") { return ref }
+        guard let url = URL(string: ref), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        do {
+            let (data, resp) = try await imageSession.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode), !data.isEmpty else { return nil }
+            let mime = http.value(forHTTPHeaderField: "Content-Type")?
+                .split(separator: ";").first.map(String.init) ?? "image/jpeg"
+            return "data:\(mime);base64," + data.base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
     /// 将削刮结果应用到已有条目：
     /// 1. scraped 实体带 stored_id / id 的直接复用库内 ID
     /// 2. 库内不存在的 演员/标签/工作室 自动创建后再引用
     /// 3. 仅写入削刮结果中非空的字段，避免覆盖已有数据
-    static func applyScraped(_ c: GraphQLClient, item: ScrapedItem, targetID: String) async throws -> Int {
+    /// 4. includeImage=true 时把刮削图片下载转 base64 写入（scene→cover_image / performer→image）；下载失败静默跳过
+    static func applyScraped(_ c: GraphQLClient, item: ScrapedItem, targetID: String, includeImage: Bool = false) async throws -> Int {
         var changed = 0
 
         func resolvePerformerID(_ p: ScrapedPerformer) async throws -> String? {
@@ -483,6 +510,9 @@ enum StashAPI {
                 if !ids.isEmpty { input.tagIds = ids; changed += 1 }
             }
             if let us = s.urls, !us.isEmpty { input.urls = us; changed += 1 }
+            if includeImage, let ref = s.image.flatMap({ $0.isEmpty ? nil : $0 }) {
+                if let b64 = await fetchImageAsBase64(ref) { input.coverImage = b64; changed += 1 }
+            }
             if changed > 0 { try await updateScene(c, input: input) }
 
         case .performer(let p):
@@ -500,6 +530,9 @@ enum StashAPI {
                 var ids: [String] = []
                 for t in ts { if let tid = try await resolveTagID(t) { ids.append(tid) } }
                 if !ids.isEmpty { input.tagIds = ids; changed += 1 }
+            }
+            if includeImage, let ref = p.images?.first(where: { !$0.isEmpty }) {
+                if let b64 = await fetchImageAsBase64(ref) { input.image = b64; changed += 1 }
             }
             if changed > 0 { try await updatePerformer(c, input: input) }
         }
