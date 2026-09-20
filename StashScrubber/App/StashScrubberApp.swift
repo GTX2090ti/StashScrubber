@@ -160,7 +160,7 @@ final class AppSettings: ObservableObject {
         guard let p = activeProfile, !p.url.isEmpty else {
             throw StashAPIError.badURL("请先在设置中配置 Stash 服务器地址")
         }
-        return try GraphQLClient(baseURL: p.url, apiKey: p.apiKey)
+        return try GraphQLClient(baseURL: p.url, apiKey: p.apiKey, profileName: p.name)
     }
 
     func updateActive(name: String? = nil, url: String? = nil, apiKey: String? = nil) {
@@ -321,10 +321,15 @@ struct SettingsView: View {
                     } label: {
                         Label("网络诊断", systemImage: "stethoscope")
                     }
+                    NavigationLink {
+                        NetLogView()
+                    } label: {
+                        Label("网络日志（可复制）", systemImage: "doc.text.magnifyingglass")
+                    }
                 } header: {
                     Text("网络")
                 } footer: {
-                    Text("按 WiFi 名称（SSID）自动在内网/外网档案间切换，规则支持增删改；回到前台时自动检测。")
+                    Text("按 WiFi 名称（SSID）自动在内网/外网档案间切换，规则支持增删改；回到前台时自动检测。网络日志记录每次请求的结果，可一键复制用于排障。")
                 }
 
                 Section {
@@ -340,7 +345,7 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.5.14")
+                    LabeledContent("版本", value: "1.5.15")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }
@@ -361,8 +366,9 @@ struct SettingsView: View {
             let v = try await StashAPI.version(client)
             testResult = "连接成功 · Stash \(v)"
         } catch {
-            self.error = error.localizedDescription
-            testResult = "连接失败：\(error.localizedDescription)"
+            let msg = NetError.friendly(error)
+            self.error = msg
+            testResult = "连接失败：\(msg)"
         }
     }
 }

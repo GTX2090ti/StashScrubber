@@ -44,34 +44,31 @@ private struct Envelope<T: Decodable>: Decodable {
 }
 
 // MARK: - 轻量 GraphQL 客户端（无第三方依赖）
+//
+// 端点解析、会话与超时策略、错误翻译、请求日志分别收口在 StashEndpoint / NetTransport /
+// NetError / NetLog（见 NetworkCore.swift），本类只负责协议细节。
 
 final class GraphQLClient {
     let url: URL
     let apiKey: String?
+    /// 档案名（用于日志区分内网 / 外网）
+    let profileName: String
     private let session: URLSession
+    private let logTitle: String
 
     /// - Parameters:
     ///   - baseURL: 形如 http://192.168.2.210:9999 或 https://stash.example.com/stash（支持路径前缀，适配外网反代）
     ///   - apiKey: Stash 设置 → 安全 → API Key，可空
-    init(baseURL: String, apiKey: String?) throws {
-        var s = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.isEmpty {
-            throw StashAPIError.badURL("(空)")
-        }
-        if !s.hasSuffix("/graphql") {
-            s = s.hasSuffix("/") ? s + "graphql" : s + "/graphql"
-        }
-        guard let u = URL(string: s) else {
-            throw StashAPIError.badURL(baseURL)
+    ///   - profileName: 当前档案名，仅用于日志
+    init(baseURL: String, apiKey: String?, profileName: String = "") throws {
+        guard let u = StashEndpoint.graphqlURL(baseURL) else {
+            throw StashAPIError.badURL(baseURL.isEmpty ? "(空)" : baseURL)
         }
         self.url = u
         self.apiKey = (apiKey?.isEmpty == false) ? apiKey : nil
-
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 20   // 外网弱网查询一般 <5s，20s 足够；太久会让失败显形太慢
-        cfg.timeoutIntervalForResource = 60
-        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = URLSession(configuration: cfg)
+        self.profileName = profileName
+        self.session = NetTransport.api
+        self.logTitle = "GraphQL · " + (profileName.isEmpty ? "未命名档案" : profileName)
     }
 
     /// 发送 GraphQL 请求并解码 data 节点
@@ -85,27 +82,89 @@ final class GraphQLClient {
         if let apiKey { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, resp) = try await session.data(for: req)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let text = String(data: data, encoding: .utf8) ?? ""
-            throw StashAPIError.http(http.statusCode, text)
-        }
+        let op = Self.operationName(query)
+        let t0 = Date()
+        func elapsedMs() -> Double { Date().timeIntervalSince(t0) * 1000 }
 
-        let env: Envelope<T>
         do {
-            env = try JSONDecoder().decode(Envelope<T>.self, from: data)
-        } catch {
-            throw StashAPIError.decoding(error.localizedDescription)
-        }
-        if let errs = env.errors, !errs.isEmpty {
-            throw StashAPIError.server(errs.map(\.message))
-        }
-        guard let d = env.data else {
+            let (data, resp) = try await session.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode
-            let text = String(data: data, encoding: .utf8) ?? ""
-            throw StashAPIError.noData(status: status, body: text)
+
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                let text = String(data: data, encoding: .utf8) ?? ""
+                NetLog.shared.record(category: .graphql, level: .error,
+                                     title: "\(logTitle) · \(op)", method: "POST",
+                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     bytes: data.count,
+                                     message: "HTTP \(status ?? 0)：\(text.prefix(150))")
+                throw StashAPIError.http(status ?? -1, text)
+            }
+
+            let env: Envelope<T>
+            do {
+                env = try JSONDecoder().decode(Envelope<T>.self, from: data)
+            } catch {
+                NetLog.shared.record(category: .graphql, level: .error,
+                                     title: "\(logTitle) · \(op)", method: "POST",
+                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     bytes: data.count,
+                                     message: "解析失败：\(error.localizedDescription)")
+                throw StashAPIError.decoding(error.localizedDescription)
+            }
+
+            if let errs = env.errors, !errs.isEmpty {
+                let msgs = errs.map(\.message)
+                NetLog.shared.record(category: .graphql, level: .error,
+                                     title: "\(logTitle) · \(op)", method: "POST",
+                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     bytes: data.count,
+                                     message: "Stash 返回：" + msgs.joined(separator: "; "))
+                throw StashAPIError.server(msgs)
+            }
+
+            guard let d = env.data else {
+                let text = String(data: data, encoding: .utf8) ?? ""
+                NetLog.shared.record(category: .graphql, level: .warn,
+                                     title: "\(logTitle) · \(op)", method: "POST",
+                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     bytes: data.count,
+                                     message: "响应无 data 节点（对端可能不是 Stash）：\(text.prefix(150))")
+                throw StashAPIError.noData(status: status, body: text)
+            }
+
+            NetLog.shared.record(category: .graphql, level: .info,
+                                 title: "\(logTitle) · \(op)", method: "POST",
+                                 url: url.absoluteString, status: status, ms: elapsedMs(),
+                                 bytes: data.count)
+            return d
+        } catch {
+            // 取消（页面切换 / 视图复用）属噪音，不入日志
+            if NetError.isCancellation(error) { throw error }
+            // 上面各分支已记录过业务错误，这里只补记网络层异常
+            if !(error is StashAPIError) {
+                NetLog.shared.record(category: .graphql, level: .error,
+                                     title: "\(logTitle) · \(op)", method: "POST",
+                                     url: url.absoluteString, ms: elapsedMs(),
+                                     message: NetError.friendly(error))
+            }
+            throw error
         }
-        return d
+    }
+
+    /// 从查询文本提取操作名（用于日志）：query Foo / mutation Bar → Foo，匿名查询取首个字段名
+    static func operationName(_ query: String) -> String {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        for kw in ["query ", "mutation "] where q.hasPrefix(kw) {
+            let rest = q.dropFirst(kw.count)
+            let name = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+            if !name.isEmpty { return String(name) }
+        }
+        if let brace = q.firstIndex(of: "{") {
+            let rest = q[q.index(after: brace)...].drop { $0 == " " || $0 == "\n" || $0 == "\r" }
+            let name = rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+            if !name.isEmpty { return String(name) }
+        }
+        return "query"
     }
 }
 

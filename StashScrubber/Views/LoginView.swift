@@ -96,18 +96,19 @@ struct LoginView: View {
         let wan = wanURL.trimmingCharacters(in: .whitespaces)
         let key = apiKey.trimmingCharacters(in: .whitespaces)
         do {
-            let lanClient = try GraphQLClient(baseURL: lan, apiKey: key)
+            let lanClient = try GraphQLClient(baseURL: lan, apiKey: key, profileName: "内网（登录测试）")
             let lanV = try await StashAPI.version(lanClient)
             lanResult = "内网连接成功 · Stash \(lanV)"
 
-            let wanClient = try GraphQLClient(baseURL: wan, apiKey: key)
+            let wanClient = try GraphQLClient(baseURL: wan, apiKey: key, profileName: "外网（登录测试）")
             let wanV = try await StashAPI.version(wanClient)
             wanResult = "外网连接成功 · Stash \(wanV)"
 
             settings.applyFirstSetup(lanURL: lan, wanURL: wan, apiKey: key)
             serverSetupDone = true
         } catch {
-            errorText = error.localizedDescription
+            errorText = NetError.friendly(error)
+            NetLog.shared.record(category: .auth, level: .error, title: "登录连接测试", message: errorText)
         }
     }
 }

@@ -237,7 +237,7 @@ struct ScrapeSheet: View {
             boxes = (try? await StashAPI.stashBoxes(client)) ?? []
         } catch {
             // 源加载失败不阻塞 URL 方式
-            self.error = "削刮源加载失败：\(error.localizedDescription)"
+            self.error = "削刮源加载失败：" + NetError.friendly(error)
         }
     }
 
@@ -254,7 +254,7 @@ struct ScrapeSheet: View {
                 error = "没有削刮到结果。可换一个削刮源重试，或确认服务端刮削器可用（查看 Stash 日志）。"
             }
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 
@@ -428,7 +428,7 @@ struct ScrapePreview: View {
             _ = try await StashAPI.applyScraped(client, item: item, targetID: targetID, includeImage: includeImage)
             onApplied()
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }

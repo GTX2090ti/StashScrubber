@@ -93,7 +93,7 @@ struct TagDetailView: View {
             sceneCount = p.count
             scenes += p.scenes
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }
@@ -210,7 +210,7 @@ struct StudioDetailView: View {
             sceneCount = p.count
             scenes += p.scenes
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }

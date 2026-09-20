@@ -20,16 +20,8 @@ struct RemoteImageView: View {
     @State private var image: UIImage?
     @State private var failed = false
 
-    /// 图片专用会话：resource 超时是「总时长」上限（request 超时只是空闲计时，慢速滴流会一直续命），
-    /// 30s 封底保证任何情况下转圈都会结束
-    private static let session: URLSession = {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 15
-        cfg.timeoutIntervalForResource = 30
-        cfg.waitsForConnectivity = false
-        cfg.httpMaximumConnectionsPerHost = 6
-        return URLSession(configuration: cfg)
-    }()
+    /// 图片会话（含 resource 总时长封顶）统一来自 NetTransport.image
+    private static var session: URLSession { NetTransport.image }
 
     var body: some View {
         ZStack {
@@ -51,22 +43,10 @@ struct RemoteImageView: View {
 
     /// 服务端返回的图片是绝对地址（指向 Stash 本机 / 内网 IP）。
     /// 当主机与当前档案不一致（例如外网反代档案）时，重写为「当前档案基址 + 原路径与查询参数」，
-    /// 保证内外网档案都能正确加载图片。
+    /// 保证内外网档案都能正确加载图片。重写规则统一在 StashEndpoint。
     private func resolvedURL() -> URL? {
-        guard let s = urlString, !s.isEmpty,
-              var comps = URLComponents(string: s), comps.host != nil else { return nil }
-        guard let base = URL(string: AppSettings.shared.serverURL),
-              let baseComps = URLComponents(url: base, resolvingAgainstBaseURL: false),
-              baseComps.host != nil else { return comps.url }
-        if comps.host == baseComps.host && comps.port == baseComps.port {
-            return comps.url
-        }
-        var merged = baseComps
-        var basePath = baseComps.path
-        if basePath.hasSuffix("/") { basePath.removeLast() }
-        merged.path = basePath + comps.path
-        merged.queryItems = comps.queryItems
-        return merged.url
+        guard let s = urlString, !s.isEmpty else { return nil }
+        return StashEndpoint.rewriteImage(s, base: AppSettings.shared.serverURL)
     }
 
     private func load() async {
@@ -74,16 +54,26 @@ struct RemoteImageView: View {
         failed = false
         guard let url = resolvedURL() else {
             failed = true
+            NetLog.shared.record(category: .image, level: .warn, title: "图片地址无效",
+                                 url: urlString, message: "无法解析图片地址或当前档案未配置")
             return
         }
         var req = URLRequest(url: url)
         let key = AppSettings.shared.apiKey
         if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "ApiKey") }
+        let t0 = Date()
         do {
-            let (data, _) = try await Self.session.data(for: req)
+            let (data, resp) = try await Self.session.data(for: req)
+            let ms = Date().timeIntervalSince(t0) * 1000
+            let status = (resp as? HTTPURLResponse)?.statusCode
             // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
             // UIImage 无法解码这些格式 → 显示占位图标
             if let img = UIImage(data: data) {
+                if NetLog.verboseImage {
+                    NetLog.shared.record(category: .image, level: .info, title: "图片",
+                                         method: "GET", url: url.absoluteString,
+                                         status: status, ms: ms, bytes: data.count)
+                }
                 if let aspect = smartCropAspect {
                     // 智能裁剪移出主线程；Vision 请求在部分 iOS 26 设备上会挂死
                     //（ANECF 推理故障，重启 App 也无效），必须带超时熔断兜底
@@ -93,11 +83,19 @@ struct RemoteImageView: View {
                 }
             } else {
                 failed = true
+                NetLog.shared.record(category: .image, level: .warn, title: "图片无法解码",
+                                     method: "GET", url: url.absoluteString,
+                                     status: status, ms: ms, bytes: data.count,
+                                     message: "返回内容不是可解码的位图（可能是 SVG 占位图或 HTML 错误页）")
             }
         } catch {
-            // 视图复用 / 页面切换导致的任务取消：静默保持原状，不算失败
-            if !(error is CancellationError), !(error is URLError && (error as! URLError).code == .cancelled) {
+            // 视图复用 / 页面切换导致的任务取消：静默保持原状，不算失败，也不入日志
+            if !NetError.isCancellation(error) {
                 failed = true
+                NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
+                                     method: "GET", url: url.absoluteString,
+                                     ms: Date().timeIntervalSince(t0) * 1000,
+                                     message: NetError.friendly(error))
             }
         }
     }

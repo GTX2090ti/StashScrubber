@@ -141,7 +141,7 @@ struct SceneEditView: View {
             onSaved()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }
@@ -248,7 +248,7 @@ struct PerformerEditView: View {
             onSaved()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }

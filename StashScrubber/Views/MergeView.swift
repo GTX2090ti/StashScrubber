@@ -95,7 +95,7 @@ struct MergeSceneSheet: View {
             let p = try await StashAPI.findScenes(client, query: query, sort: "title", direction: "ASC")
             scenes = p.scenes.filter { $0.id != target.id }
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 
@@ -108,7 +108,7 @@ struct MergeSceneSheet: View {
             onMerged()
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }

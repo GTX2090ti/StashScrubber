@@ -6,7 +6,8 @@ import SwiftUI
 //  2. 当前档案的图片链路（取一张短片截图，报告 HTTP 状态 / 字节数 / Content-Type）
 //  3. 系统代理对比：同请求绕过系统代理直连，区分「代理吊死」与「本地网络权限」
 //  4. WiFi 自动切换的最近状态（SSID / 动作）
-// 所有探测外挂硬超时：到点强制取消任务，诊断页绝不整体吊死。
+// 探测实现统一来自 NetProbe（NetworkCore.swift），每个探测外挂硬超时：
+// 到点强制取消任务，诊断页绝不整体吊死。所有结果同时写入网络日志。
 
 struct DiagnosticsView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -31,7 +32,7 @@ struct DiagnosticsView: View {
             } header: {
                 Text("当前档案")
             } footer: {
-                Text("逐项检测所有档案的 GraphQL 可达性、图片链路与系统代理干扰；任何一项失败请截图反馈。")
+                Text("逐项检测所有档案的 GraphQL 可达性、图片链路与系统代理干扰；检测结果同时记录到网络日志，可一键复制反馈。")
             }
 
             Section("检测结果") {
@@ -83,6 +84,12 @@ struct DiagnosticsView: View {
                     }
                 }
                 .disabled(running)
+
+                NavigationLink {
+                    NetLogView()
+                } label: {
+                    Label("查看网络日志（可复制）", systemImage: "doc.text.magnifyingglass")
+                }
             }
         }
         .navigationTitle("网络诊断")
@@ -90,7 +97,7 @@ struct DiagnosticsView: View {
         .task { await runAll() }
     }
 
-    // MARK: 检测流程（主体在 MainActor，探测函数 nonisolated 短超时 + 硬超时兜底）
+    // MARK: 检测流程（全部并发；每个探测由 NetProbe 外挂硬超时兜底）
 
     private func runAll() async {
         guard !running else { return }
@@ -98,21 +105,15 @@ struct DiagnosticsView: View {
         rows = []
         defer { running = false }
 
-        // 全部探测并发执行；每个探测有 URLSession 自身超时 + 外挂硬超时双重保险
         let results = await withTaskGroup(of: [Row].self, returning: [Row].self) { group in
             for p in settings.profiles {
                 group.addTask {
-                    let r = await Self.timed(8) {
-                        await Self.gql(p.url, apiKey: p.apiKey, query: "{ version { version } }", timeout: 6)
-                    }
-                    let isLAN = Self.isLANHost(p.url)
+                    let isLAN = StashEndpoint.isLAN(p.url)
+                    let r = await Self.probeGraphQL(p)
                     var row = Self.row(for: r, title: "GraphQL · \(p.name)", isLAN: isLAN)
-                    // 系统代理对比：仅对探测失败的档案做直连复测
+                    // 系统代理对比：仅对失败档案做绕过代理的直连复测
                     if r.error != nil {
-                        let d = await Self.timed(8) {
-                            await Self.gql(p.url, apiKey: p.apiKey, query: "{ version { version } }", timeout: 6,
-                                           session: Self.directSession)
-                        }
+                        let d = await Self.probeGraphQL(p, direct: true)
                         row = Self.withDirectCompare(primary: row, direct: d, isLAN: isLAN)
                     }
                     return [row]
@@ -131,12 +132,67 @@ struct DiagnosticsView: View {
         rows = results
     }
 
-    private static func isLANHost(_ url: String) -> Bool {
-        guard let h = URL(string: url)?.host ?? URL(string: "http://" + url.trimmingCharacters(in: .whitespaces))?.host else { return false }
-        return h.hasPrefix("192.168.") || h.hasPrefix("10.") || h.hasPrefix("172.")
+    // MARK: 探测（统一走 NetProbe）
+
+    private static func probeGraphQL(_ p: ServerProfile, direct: Bool = false) async -> NetProbe.Result {
+        let title = "GraphQL 探测 · \(p.name)" + (direct ? "（直连对比）" : "")
+        let session = direct ? NetTransport.direct : NetTransport.api
+        return await NetProbe.hardTimeout(8, category: .diag, title: title,
+                                          url: StashEndpoint.graphqlURL(p.url)?.absoluteString) {
+            await NetProbe.graphql(base: p.url, apiKey: p.apiKey,
+                                   query: "{ version { version } }", timeout: 6,
+                                   session: session, category: .diag, title: title)
+        }
     }
 
-    private static func row(for r: ProbeOut, title: String, isLAN: Bool) -> Row {
+    private static func imageProbe(profile p: ServerProfile) async -> [Row] {
+        let q = #"query { findScenes(filter: {per_page: 1}) { scenes { paths { screenshot } } } }"#
+        let title = "图片链路 · \(p.name)"
+        let r = await NetProbe.hardTimeout(8, category: .diag, title: title,
+                                           url: StashEndpoint.graphqlURL(p.url)?.absoluteString) {
+            await NetProbe.graphql(base: p.url, apiKey: p.apiKey, query: q, timeout: 6,
+                                   category: .diag, title: title)
+        }
+        if let err = r.error {
+            return [Row(title: title, detail: "查询短片失败：\(err)", state: .fail)]
+        }
+        guard let shot = NetProbe.firstScreenshot(r.raw) else {
+            return [Row(title: title, detail: "库里没有短片可测，或响应不含截图地址", state: .info)]
+        }
+        var out: [Row] = [Row(title: title, detail: "原始地址：\(shot)", state: .info)]
+        guard let finalURL = finalImageURL(shot, base: p.url) else {
+            out.append(Row(title: "图片下载 · \(p.name)", detail: "图片地址无效：\(shot)", state: .fail))
+            return out
+        }
+        let img = await NetProbe.hardTimeout(12, category: .diag, title: "图片下载 · \(p.name)", url: finalURL) {
+            await NetProbe.image(urlString: finalURL, apiKey: p.apiKey, timeout: 10,
+                                 category: .diag, title: "图片下载 · \(p.name)")
+        }
+        let t = "图片下载 · \(p.name)"
+        if let err = img.error {
+            let d = await NetProbe.hardTimeout(12, category: .diag, title: t + "（直连对比）", url: finalURL) {
+                await NetProbe.image(urlString: finalURL, apiKey: p.apiKey, timeout: 10,
+                                     session: NetTransport.direct, category: .diag,
+                                     title: t + "（直连对比）")
+            }
+            if let derr = d.error {
+                out.append(Row(title: t, detail: "失败：\(err)（\(String(format: "%.1f", img.latency))s）\n直连也失败：\(derr)\n地址：\(finalURL)", state: .fail))
+            } else {
+                out.append(Row(title: t, detail: "常规会话失败：\(err)\n⚠️ 直连成功：\(d.describeImage(url: finalURL))\n→ 系统代理干扰，检查 Wi-Fi 的 HTTP 代理设置\n地址：\(finalURL)", state: .warn))
+            }
+        } else {
+            out.append(Row(title: t, detail: img.describeImage(url: finalURL), state: .ok))
+        }
+        return out
+    }
+
+    private static func finalImageURL(_ raw: String, base: String) -> String? {
+        StashEndpoint.rewriteImage(raw, base: base)?.absoluteString
+    }
+
+    // MARK: 结果映射
+
+    private static func row(for r: NetProbe.Result, title: String, isLAN: Bool) -> Row {
         if let err = r.error {
             var detail = "失败：\(err)（\(String(format: "%.1f", r.latency))s）"
             if isLAN {
@@ -148,7 +204,7 @@ struct DiagnosticsView: View {
     }
 
     /// 对失败的探测补一条「绕过系统代理直连」的对比结论
-    private static func withDirectCompare(primary: Row, direct: ProbeOut, isLAN: Bool) -> Row {
+    private static func withDirectCompare(primary: Row, direct: NetProbe.Result, isLAN: Bool) -> Row {
         var detail = primary.detail
         if let derr = direct.error {
             detail += "\n直连（绕过系统代理）也失败：\(derr)"
@@ -159,204 +215,5 @@ struct DiagnosticsView: View {
         }
         detail += "\n⚠️ 直连（绕过系统代理）成功：\(direct.describe())\n→ 系统代理把请求吊住了！检查 设置→无线局域网→当前网络→HTTP 代理（指向已失效代理会无限转圈），关闭后重试"
         return Row(title: primary.title, detail: detail, state: .warn)
-    }
-
-    private static func imageProbe(profile p: ServerProfile) async -> [Row] {
-        let q = #"query { findScenes(filter: {per_page: 1}) { scenes { paths { screenshot } } } }"#
-        let r = await Self.timed(8) { await Self.gql(p.url, apiKey: p.apiKey, query: q, timeout: 6) }
-        if let err = r.error {
-            return [Row(title: "图片链路 · \(p.name)", detail: "查询短片失败：\(err)", state: .fail)]
-        }
-        guard let shot = Self.firstScreenshot(r.raw) else {
-            return [Row(title: "图片链路 · \(p.name)", detail: "库里没有短片可测，或响应不含截图地址", state: .info)]
-        }
-        var out: [Row] = [Row(title: "图片链路 · \(p.name)", detail: "原始地址：\(shot)", state: .info)]
-        let finalURL = Self.rewrite(shot, to: p.url) ?? shot
-        // 常规会话（走系统代理）
-        let img = await Self.timed(12) { await Self.getImage(finalURL, apiKey: p.apiKey, timeout: 10) }
-        let title = "图片下载 · \(p.name)"
-        if let err = img.error {
-            // 直连复测
-            let d = await Self.timed(12) { await Self.getImage(finalURL, apiKey: p.apiKey, timeout: 10, session: Self.directSession) }
-            if let derr = d.error {
-                out.append(Row(title: title, detail: "失败：\(err)（\(String(format: "%.1f", img.latency))s）\n直连也失败：\(derr)\n地址：\(finalURL)", state: .fail))
-            } else {
-                out.append(Row(title: title, detail: "常规会话失败：\(err)\n⚠️ 直连成功：\(d.describeImage(url: finalURL))\n→ 系统代理干扰，检查 Wi-Fi 的 HTTP 代理设置\n地址：\(finalURL)", state: .warn))
-            }
-        } else {
-            out.append(Row(title: title, detail: img.describeImage(url: finalURL), state: .ok))
-        }
-        return out
-    }
-
-    // MARK: 探测工具
-
-    private struct ProbeOut {
-        var status: Int?
-        var snippet: String?
-        var raw: Data?
-        var latency: Double = 0
-        var error: String?
-        var byteCount: Int?
-        var contentType: String?
-
-        func describe() -> String {
-            var parts: [String] = []
-            if let status { parts.append("HTTP \(status)") }
-            parts.append(String(format: "%.2f", latency) + "s")
-            if let snippet { parts.append(snippet) }
-            return parts.joined(separator: " · ")
-        }
-
-        func describeImage(url: String) -> String {
-            var parts: [String] = []
-            if let status { parts.append("HTTP \(status)") }
-            if let b = byteCount { parts.append("\(b)B") }
-            if let ct = contentType { parts.append(ct) }
-            parts.append(String(format: "%.2f", latency) + "s")
-            return parts.joined(separator: " · ") + "\n地址：\(url)"
-        }
-    }
-
-    /// 硬超时包装：探测函数自身超时失灵（如本地网络权限挂起）时，到点强制取消
-    private static nonisolated func timed(_ seconds: Double, _ op: @escaping @Sendable () async -> ProbeOut) async -> ProbeOut {
-        await withTaskGroup(of: ProbeOut.self) { g in
-            g.addTask { await op() }
-            g.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return ProbeOut(latency: seconds, error: "硬超时 \(Int(seconds))s（探测任务无响应，已强制终止）")
-            }
-            let first = await g.next() ?? ProbeOut(error: "无结果")
-            g.cancelAll()
-            return first
-        }
-    }
-
-    /// 绕过系统代理的会话（对比用）
-    private static let directSession: URLSession = {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.connectionProxyDictionary = [:]
-        cfg.timeoutIntervalForRequest = 6
-        cfg.timeoutIntervalForResource = 10
-        return URLSession(configuration: cfg)
-    }()
-
-    /// 拼接 GraphQL 端点（与 GraphQLClient 同规则：去尾斜杠、补 /graphql）
-    private static nonisolated func endpoint(_ base: String) -> String {
-        var s = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasSuffix("/") { s.removeLast() }
-        if !s.hasSuffix("/graphql") { s += "/graphql" }
-        return s
-    }
-
-    /// 短超时 GraphQL 探测：任何 HTTP 应答（含 401/400）都算可达，body 供解析
-    private static nonisolated func gql(_ base: String, apiKey: String, query: String, timeout: Double,
-                                        session: URLSession = .shared) async -> ProbeOut {
-        guard let url = URL(string: endpoint(base)) else {
-            return ProbeOut(error: "地址无效")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = timeout
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
-        let payload: [String: Any] = ["query": query, "variables": [:]]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        let t0 = Date()
-        do {
-            let (data, resp) = try await session.data(for: req)
-            var out = ProbeOut(status: (resp as? HTTPURLResponse)?.statusCode,
-                               raw: data,
-                               latency: Date().timeIntervalSince(t0))
-            // 摘要：Stash 版本或 GraphQL 错误信息
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let errs = obj["errors"] as? [[String: Any]],
-                   let msg = errs.first?["message"] as? String {
-                    out.snippet = "GraphQL 错误: " + msg
-                } else if let d = obj["data"] as? [String: Any],
-                          let v = d["version"] as? [String: Any],
-                          let ver = v["version"] as? String {
-                    out.snippet = "Stash " + ver
-                }
-            }
-            return out
-        } catch is CancellationError {
-            return ProbeOut(latency: Date().timeIntervalSince(t0), error: "已取消")
-        } catch {
-            return ProbeOut(latency: Date().timeIntervalSince(t0), error: Self.friendly(error))
-        }
-    }
-
-    /// 从查询结果中取第一张短片截图地址
-    private static nonisolated func firstScreenshot(_ data: Data?) -> String? {
-        guard let data else { return nil }
-        struct R: Decodable {
-            struct P: Decodable { let screenshot: String? }
-            struct S: Decodable { let paths: P? }
-            struct F: Decodable { let scenes: [S]? }
-            let findScenes: F?
-        }
-        guard let r = try? JSONDecoder().decode(R.self, from: data) else { return nil }
-        return r.findScenes?.scenes?.first?.paths?.screenshot
-    }
-
-    /// 与 RemoteImageView.resolvedURL 同款重写：把指向其他主机的图片地址改写到当前档案基址
-    private static nonisolated func rewrite(_ urlString: String, to base: String) -> String? {
-        guard var comps = URLComponents(string: urlString), comps.host != nil,
-              let bc = URLComponents(string: base.trimmingCharacters(in: .whitespacesAndNewlines)),
-              bc.host != nil else { return urlString }
-        if comps.host == bc.host && comps.port == bc.port { return urlString }
-        var merged = bc
-        var bp = bc.path
-        if bp.hasSuffix("/") { bp.removeLast() }
-        merged.path = bp + comps.path
-        merged.queryItems = comps.queryItems
-        return merged.url?.absoluteString
-    }
-
-    /// 图片 GET 探测
-    private static nonisolated func getImage(_ urlString: String, apiKey: String, timeout: Double,
-                                             session: URLSession = .shared) async -> ProbeOut {
-        guard let url = URL(string: urlString) else {
-            return ProbeOut(error: "地址无效")
-        }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = timeout
-        if !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
-        let t0 = Date()
-        do {
-            let (data, resp) = try await session.data(for: req)
-            let http = resp as? HTTPURLResponse
-            let ct = http?.value(forHTTPHeaderField: "Content-Type") ?? "-"
-            var out = ProbeOut(status: http?.statusCode,
-                               latency: Date().timeIntervalSince(t0),
-                               byteCount: data.count,
-                               contentType: ct)
-            if let http, !(200...299).contains(http.statusCode) {
-                out.error = "HTTP \(http.statusCode)"
-            } else if !ct.lowercased().contains("image") {
-                out.error = "返回的不是图片（Content-Type: \(ct)）"
-            }
-            return out
-        } catch is CancellationError {
-            return ProbeOut(latency: Date().timeIntervalSince(t0), error: "已取消")
-        } catch {
-            return ProbeOut(latency: Date().timeIntervalSince(t0), error: Self.friendly(error))
-        }
-    }
-
-    /// 常见 URLError 的人话翻译
-    private static nonisolated func friendly(_ error: Error) -> String {
-        guard let ue = error as? URLError else { return error.localizedDescription }
-        switch ue.code {
-        case .timedOut: return "超时（连接或响应无进展）"
-        case .cannotFindHost: return "DNS 解析失败（域名不存在或 DNS 挂了）"
-        case .cannotConnectToHost: return "连接被拒（端口不通/服务未起）"
-        case .networkConnectionLost: return "连接中断"
-        case .notConnectedToInternet: return "无网络连接"
-        case .dnsLookupFailed: return "DNS 查询失败"
-        case .cancelled: return "已取消"
-        default: return ue.localizedDescription
-        }
     }
 }

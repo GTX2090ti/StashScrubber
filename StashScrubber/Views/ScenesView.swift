@@ -46,7 +46,7 @@ final class SceneListViewModel: ObservableObject {
             if page == 1 { scenes = p.scenes } else { scenes += p.scenes }
             page += 1
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }
@@ -337,7 +337,7 @@ struct SceneDetailView: View {
             let client = try settings.makeClient()
             scene = try await StashAPI.scene(client, id: sceneID)
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 
@@ -357,7 +357,7 @@ struct SceneDetailView: View {
             scene?.title = newTitle   // 实时更新
             editingTitle = false
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 

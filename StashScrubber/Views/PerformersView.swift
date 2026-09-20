@@ -32,7 +32,7 @@ final class PerformerListViewModel: ObservableObject {
             if page == 1 { performers = p.performers } else { performers += p.performers }
             page += 1
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 }
@@ -192,7 +192,7 @@ struct PerformerDetailView: View {
             let client = try settings.makeClient()
             performer = try await StashAPI.performer(client, id: performerID)
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 
@@ -291,7 +291,7 @@ struct PerformerDetailView: View {
             sceneCount = p.count
             scenes += p.scenes
         } catch {
-            self.error = error.localizedDescription
+            self.error = NetError.friendly(error)
         }
     }
 

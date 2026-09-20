@@ -440,28 +440,36 @@ enum StashAPI {
 
     // MARK: 削刮结果回写（核心流程）
 
-    /// 图片下载会话（外站图片 URL → base64；独立短超时，失败不影响文字字段）
-    private static let imageSession: URLSession = {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 15
-        cfg.timeoutIntervalForResource = 20
-        return URLSession(configuration: cfg)
-    }()
-
     /// 把刮削结果里的图片引用（URL 或 data URI）转为 Stash 接受的 base64 data URI；失败返回 nil
+    /// 下载会话统一走 NetTransport.image（短超时，失败不影响文字字段）
     static func fetchImageAsBase64(_ ref: String) async -> String? {
         if ref.hasPrefix("data:") { return ref }
         guard let url = URL(string: ref), let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { return nil }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
+        let t0 = Date()
         do {
-            let (data, resp) = try await imageSession.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode), !data.isEmpty else { return nil }
+            let (data, resp) = try await NetTransport.image.data(for: req)
+            let ms = Date().timeIntervalSince(t0) * 1000
+            let http = resp as? HTTPURLResponse
+            guard let http, (200...299).contains(http.statusCode), !data.isEmpty else {
+                NetLog.shared.record(category: .image, level: .warn, title: "刮削图片下载",
+                                     method: "GET", url: ref, status: http?.statusCode, ms: ms,
+                                     bytes: data.count, message: "非 2xx 或空响应，已跳过图片")
+                return nil
+            }
             let mime = http.value(forHTTPHeaderField: "Content-Type")?
                 .split(separator: ";").first.map(String.init) ?? "image/jpeg"
+            NetLog.shared.record(category: .image, level: .info, title: "刮削图片下载",
+                                 method: "GET", url: ref, status: http.statusCode, ms: ms,
+                                 bytes: data.count, message: mime)
             return "data:\(mime);base64," + data.base64EncodedString()
         } catch {
+            NetLog.shared.record(category: .image, level: .warn, title: "刮削图片下载失败",
+                                 method: "GET", url: ref,
+                                 ms: Date().timeIntervalSince(t0) * 1000,
+                                 message: NetError.friendly(error) + "（已跳过图片，文字字段照常写入）")
             return nil
         }
     }
