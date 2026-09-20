@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// 与 ScenesView 主列表一致的网格列：iPhone（compact）固定 3 列；iPad（regular）自适应列宽约 140pt
+func detailSceneGridColumns(_ hSizeClass: UserInterfaceSizeClass?) -> [GridItem] {
+    if hSizeClass == .regular {
+        return [GridItem(.adaptive(minimum: 140), spacing: 12)]
+    }
+    return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+}
+
 // MARK: - 标签详情（短片详情点击标签跳转；进入前已校验标签存在）
 
 struct TagDetailView: View {
@@ -7,6 +15,7 @@ struct TagDetailView: View {
     let tagName: String
 
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var scenes: [Scene] = []
     @State private var sceneCount = 0
     @State private var loading = false
@@ -38,7 +47,7 @@ struct TagDetailView: View {
                                     .font(.footnote)
                                     .foregroundStyle(.tertiary)
                             } else {
-                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                                LazyVGrid(columns: detailSceneGridColumns(hSizeClass), spacing: 14) {
                                     ForEach(scenes) { sc in
                                         NavigationLink(value: sc.id) {
                                             SceneCard(scene: sc)
@@ -96,6 +105,7 @@ struct StudioDetailView: View {
     let studioName: String
 
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var studio: Studio?
     @State private var scenes: [Scene] = []
     @State private var sceneCount = 0
@@ -150,7 +160,7 @@ struct StudioDetailView: View {
                                     .font(.footnote)
                                     .foregroundStyle(.tertiary)
                             } else {
-                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                                LazyVGrid(columns: detailSceneGridColumns(hSizeClass), spacing: 14) {
                                     ForEach(scenes) { sc in
                                         NavigationLink(value: sc.id) {
                                             SceneCard(scene: sc)
