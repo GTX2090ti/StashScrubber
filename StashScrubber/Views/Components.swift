@@ -97,7 +97,7 @@ extension UIImage {
     /// 按目标宽高比裁剪：Vision 注意力显著性检测定位主体焦点，裁剪窗口对齐焦点；
     /// 检测失败时回退：横图略偏上居中（人物头部常在上方），竖图居中。
     func smartCropped(toAspect aspect: CGFloat) -> UIImage {
-        guard let cg = cgImage, orientation == .up else { return self }
+        guard let cg = cgImage, imageOrientation == .up else { return self }
         let w = CGFloat(cg.width), h = CGFloat(cg.height)
         let currentAspect = w / h
         if abs(currentAspect - aspect) < 0.02 { return self }
@@ -138,7 +138,7 @@ extension UIImage {
         do {
             try handler.perform([request])
             guard let obs = request.results?.first as? VNSaliencyImageObservation,
-                  let box = obs.salientObjects.first?.boundingBox else { return nil }
+                  let box = obs.salientObjects?.first?.boundingBox else { return nil }
             return box
         } catch {
             return nil
