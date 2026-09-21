@@ -143,6 +143,15 @@ struct StudiosView: View {
                     .onAppear {
                         anchor.restore(proxy) { id in vm.studios.contains { $0.id == id } }
                     }
+                    // 分页「加载更多」：请求期间冻结锚点、数据落地后守住位置 ——
+                    // 追加数据会让 SwiftUI 重置偏移（表现：点一下「加载更多」就跳回最上面）
+                    .onChange(of: vm.loading) { loading in
+                        if loading {
+                            anchor.freeze()
+                        } else {
+                            anchor.restore(proxy, holdSeconds: 0.6) { id in vm.studios.contains { $0.id == id } }
+                        }
+                    }
             }
             // 导航目的地统一注册在栈根，勿下移到条件分支里（否则列表数据刷新时可能短暂失效）
             .navigationDestination(for: StudioNavID.self) { st in

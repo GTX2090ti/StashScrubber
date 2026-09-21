@@ -20,6 +20,12 @@ import SwiftUI
 //     修饰符重建、基准值被重置为当前值，`1 → 0` 的变化不再产生回调，恢复根本不会执行。
 //   因此这里做三件事：**恢复期间锁定锚点**（拒绝上报覆盖）+ **多阶段重试直到到位**
 //   + 入口同时挂 `onChange(of: path.count)` 与 `onAppear`，任一生效即可。
+//
+// v1.5.21 补：**分页「加载更多」同样会重置偏移**（表现：点一下「加载更多」就跳回最上面）。
+//   追加数据也是一次内容变化，SwiftUI 可能把偏移重置为 0；更糟的是零尺寸探针会随即把
+//   「第一项」上报回来 —— 锚点一旦被改写，之后无论恢复多少次都只能恢复到第一项。
+//   所以追加场景必须走同一条路：请求期间 `freeze()`（拒绝上报覆盖锚点），
+//   数据落地后 `restore(holdSeconds:)` 守一段时间，期间任何「被推到顶部下方」的上报都拉回。
 
 /// 滚动位置锚点：记录列表「顶部可见项」，用于从详情页返回时恢复原位。
 /// 只在主线程访问（均来自 SwiftUI 视图回调），故标注 `@unchecked Sendable`
@@ -29,9 +35,10 @@ final class ScrollMemory: @unchecked Sendable {
     private static let edge: CGFloat = 4
     /// 恢复重试间隔（秒）：要够密，才能让某一次恰好落在转场动画结束之后
     private static let retryInterval: Double = 0.06
-    /// 最多重试次数：首次立即执行 + 8 次重试 ≈ 0.5s，覆盖 push/pop 转场（约 0.35s）
-    /// 与 LazyVGrid 首帧渲染
-    private static let maxRetries = 8
+    /// 基础恢复窗口（秒）：首次立即执行 + 按 0.06s 步进 ≈ 0.55s，
+    /// 覆盖 push/pop 转场（约 0.35s）与 LazyVGrid 首帧渲染。
+    /// 窗口内「锚点项没有上报」会被当作「还没渲染出来」而继续重试。
+    private static let recoverWindow: Double = 0.55
     /// 「已回到顶部」的容差（pt）
     private static let topTolerance: CGFloat = 3
 
@@ -87,36 +94,51 @@ final class ScrollMemory: @unchecked Sendable {
         suspended = true
     }
 
-    /// 从详情返回：多阶段滚回锚点。
+    /// 从详情返回 / 分页追加后：把锚点项滚回顶部。
     /// pop 之后布局尚未落定、LazyVGrid 可能还没渲染出目标项，单次 scrollTo 会被忽略
-    /// （表现就是「返回后仍在最上面」），故重试到「目标项回到顶部」为止。
-    func restore(_ proxy: ScrollViewProxy, exists: (String) -> Bool) {
+    /// （表现就是「返回后仍在最上面」），故按拍步进、重试到窗口结束。
+    /// - Parameter holdSeconds: 到位后**继续守护**的时长。追加数据（加载更多）时
+    ///   SwiftUI 可能在数据落地后若干帧才重置偏移，守护期内一旦探针上报显示锚点项
+    ///   已被推到顶部下方，就立刻拉回。返回场景传 0 即可。
+    func restore(_ proxy: ScrollViewProxy, holdSeconds: Double = 0, exists: (String) -> Bool) {
         guard !restoring else { return }              // 已在恢复中（onAppear 与 onChange 可能同时触发）
         guard let id = frozenID ?? topID, exists(id) else {
             endRestore()
             return
         }
         restoring = true
-        attempt(proxy, id: id, count: 0)
+        latest = [:]                                 // 先清空：只有「本拍之后」的上报才算数
+        let now = Date()
+        step(proxy, id: id,
+             recoverUntil: now.addingTimeInterval(Self.recoverWindow),
+             deadline: now.addingTimeInterval(Self.recoverWindow + max(0, holdSeconds)))
     }
 
-    private func attempt(_ proxy: ScrollViewProxy, id: String, count: Int) {
-        var t = Transaction()
-        t.disablesAnimations = true                  // 关动画：避免「先回顶部再滑下来」的闪动
-        withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
-        latest = [:]                                 // 清空，等新一轮上报后再判定是否到位
-        if count >= Self.maxRetries { endRestore(); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryInterval) { [weak self] in
-            guard let self else { return }
-            if self.isAtTop(id) { self.endRestore(); return }
-            self.attempt(proxy, id: id, count: count + 1)
+    /// 单拍：
+    /// - 探针**有上报**且锚点项被推到顶部下方 → 说明偏移被重置了，立刻拉回；
+    ///   只处理「正偏离」—— 用户自己往下滑会让锚点项跑到视口上方（负值），那是他的意愿，不该干预
+    /// - 探针**无上报** → 恢复窗口内视作「目标项还没渲染出来」，继续重试；
+    ///   过了窗口（守护期）则说明位置稳定，不再打扰
+    private func step(_ proxy: ScrollViewProxy, id: String, recoverUntil: Date, deadline: Date) {
+        let now = Date()
+        if now >= deadline { endRestore(); return }
+        let reported = latest[id]
+        let needScroll: Bool
+        if let y = reported {
+            needScroll = y > Self.topTolerance
+        } else {
+            needScroll = now < recoverUntil
         }
-    }
-
-    /// 目标项是否已回到顶部附近（依赖探针的新一轮上报）
-    private func isAtTop(_ id: String) -> Bool {
-        guard let y = latest[id] else { return false }
-        return abs(y) <= Self.topTolerance
+        if needScroll {
+            var t = Transaction()
+            t.disablesAnimations = true              // 关动画：避免「先回顶部再滑下来」的闪动
+            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
+            latest = [:]
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryInterval) { [weak self] in
+            guard let self, self.restoring else { return }
+            self.step(proxy, id: id, recoverUntil: recoverUntil, deadline: deadline)
+        }
     }
 
     /// 恢复结束（到位或放弃）：恢复正常上报

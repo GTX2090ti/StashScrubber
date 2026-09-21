@@ -111,6 +111,15 @@ struct TagDetailView: View {
                     .onAppear {
                         anchor.restore(proxy) { id in scenes.contains { $0.id == id } }
                     }
+                    // 分页「加载更多」：请求期间冻结锚点、数据落地后守住位置 ——
+                    // 追加数据会让 SwiftUI 重置偏移（表现：点一下「加载更多」就跳回最上面）
+                    .onChange(of: loading) { busy in
+                        if busy {
+                            anchor.freeze()
+                        } else {
+                            anchor.restore(proxy, holdSeconds: 0.6) { id in scenes.contains { $0.id == id } }
+                        }
+                    }
                 }
             }
         }
@@ -248,6 +257,15 @@ struct StudioDetailView: View {
                     .onDisappear { anchor.freeze() }
                     .onAppear {
                         anchor.restore(proxy) { id in scenes.contains { $0.id == id } }
+                    }
+                    // 分页「加载更多」：请求期间冻结锚点、数据落地后守住位置 ——
+                    // 追加数据会让 SwiftUI 重置偏移（表现：点一下「加载更多」就跳回最上面）
+                    .onChange(of: loading) { busy in
+                        if busy {
+                            anchor.freeze()
+                        } else {
+                            anchor.restore(proxy, holdSeconds: 0.6) { id in scenes.contains { $0.id == id } }
+                        }
                     }
                 }
             }
