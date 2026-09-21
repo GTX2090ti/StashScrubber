@@ -74,14 +74,24 @@ final class WiFiAutoSwitch: ObservableObject {
         let ssid = await Self.fetchCurrentSSID()
         lastSSID = ssid
         guard let ssid else {
-            lastAction = "无法获取当前 WiFi 名称（请检查定位权限）"
+            // 读不到 SSID = 规则无法判定当前位置：解除「规则锁定」，退回自动选路。
+            // 否则一旦离开规则 WiFi，用户会被永久钉在那一侧不可达的地址上。
+            let released = settings.releaseRulePin(reason: "无法获取当前 WiFi 名称，已解除规则锁定并交给自动选路")
+            lastAction = released
+                ? "无法获取当前 WiFi 名称（请检查定位权限），已解除规则锁定"
+                : "无法获取当前 WiFi 名称（请检查定位权限）"
             NetLog.shared.record(category: .wifi, level: .warn, title: "自动切换",
                                  message: lastAction ?? "")
+            if released { await settings.autoSelectSlot() }
             return
         }
         guard let rule = rules.first(where: { $0.ssid.caseInsensitiveCompare(ssid) == .orderedSame }) else {
-            // 无匹配规则：不刷日志（每次回前台都会执行），仅在界面上提示
-            lastAction = "当前 WiFi「\(ssid)」无匹配规则，保持自动选路"
+            // 无匹配规则：说明已离开规则 WiFi → 解除规则锁定（手动锁定不动）
+            let released = settings.releaseRulePin(reason: "当前 WiFi「\(ssid)」无匹配规则，已解除规则锁定")
+            lastAction = released
+                ? "当前 WiFi「\(ssid)」无匹配规则，已解除规则锁定并交给自动选路"
+                : "当前 WiFi「\(ssid)」无匹配规则，保持自动选路"
+            if released { await settings.autoSelectSlot() }
             return
         }
 
@@ -106,7 +116,7 @@ final class WiFiAutoSwitch: ObservableObject {
                                                          name: "\(conn.name) · \(slot.label)",
                                                          force: true)
             if st.isReachable {
-                settings.pin(slot)
+                settings.pin(slot, byRule: true)
                 lastAction = "检测到 WiFi「\(ssid)」，已锁定\(slot.label)地址（\(st.text)）"
                 NetLog.shared.record(category: .wifi, level: .info, title: "自动切换",
                                      message: lastAction ?? "")
@@ -119,8 +129,8 @@ final class WiFiAutoSwitch: ObservableObject {
             return
         }
 
-        // 3) 规则只指定连接：清掉锁定，交回「优先内网 + 自动兜底」
-        if settings.isSlotPinned { settings.clearPin() }
+        // 3) 规则只指定连接：清掉「规则锁定」，交回「优先内网 + 自动兜底」（手动锁定不动）
+        settings.releaseRulePin(reason: "规则「\(ssid)」未指定地址，已解除规则锁定")
         lastAction = "检测到 WiFi「\(ssid)」，已使用「\(conn.name)」并自动选路"
         NetLog.shared.record(category: .wifi, level: .info, title: "自动切换",
                              message: lastAction ?? "")

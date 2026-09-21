@@ -59,6 +59,22 @@ enum NetError {
         return false
     }
 
+    /// 是否为「链路层」失败：只有这类失败才值得重新选路
+    /// （业务错误 401 / GraphQL errors / 解析失败说明链路是通的，换了地址也没用）
+    static func isConnectivity(_ error: Error) -> Bool {
+        if error is NetTimeout { return true }
+        guard let ue = error as? URLError else { return false }
+        switch ue.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+             .notConnectedToInternet, .dnsLookupFailed, .secureConnectionFailed,
+             .serverCertificateUntrusted, .dataNotAllowed, .internationalRoamingOff,
+             .callIsActive, .resourceUnavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// 常见网络错误的「人话」翻译
     static func friendly(_ error: Error) -> String {
         if isCancellation(error) { return "已取消" }
@@ -78,28 +94,239 @@ enum NetError {
     }
 }
 
+// MARK: - 硬超时（请求兜底）
+
+/// 请求在硬超时窗口内未返回时抛出
+struct NetTimeout: LocalizedError {
+    let seconds: Double
+    let op: String
+
+    var errorDescription: String? {
+        "请求超时（\(op) 超过 \(Int(seconds))s 无响应，已强制中断）"
+    }
+}
+
+/// 硬超时包装后的 HTTP 响应（用具名结构体而非元组，避免泛型参数上的 Sendable 兼容问题）
+struct NetHTTPResult: Sendable {
+    var data: Data
+    var status: Int?
+    /// 响应 Content-Type（原始大小写，调用方自行 lowercased）
+    var contentType: String? = nil
+}
+
+/// 只允许一次 resume 的闸门：请求完成 / 硬超时 / 取消 三方竞争时保证 continuation 只恢复一次
+private final class OneShotGate<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func tryResume(_ cont: CheckedContinuation<T, Error>, _ result: Result<T, Error>) -> Bool {
+        lock.lock()
+        if done {
+            lock.unlock()
+            return false
+        }
+        done = true
+        lock.unlock()
+        cont.resume(with: result)
+        return true
+    }
+}
+
+/// 取消回调挂载点：任务的 onCancel 可能早于 continuation 建立，这里抹平顺序问题
+private final class CancelLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private var onFired: (() -> Void)?
+
+    func mount(_ h: @escaping () -> Void) {
+        lock.lock()
+        if fired {
+            lock.unlock()
+            h()
+            return
+        }
+        onFired = h
+        lock.unlock()
+    }
+
+    func fire() {
+        lock.lock()
+        fired = true
+        let h = onFired
+        onFired = nil
+        lock.unlock()
+        h?()
+    }
+}
+
+/// 给任意异步请求套一层硬超时。
+///
+/// 为什么不能只靠 URLSession 的超时：`timeoutIntervalForRequest` 只统计「请求发出后的空闲」，
+/// 当连接池被吊死的连接占满、网络路径切换（WiFi↔蜂窝）、本地网络权限挂起时，请求会卡在
+/// **排队等连接**，这段等待不计入超时 —— 表现就是「用一段时间后突然一直转圈」且永不自愈。
+///
+/// 实现用「非结构化任务 + 一次性闸门」而不是 TaskGroup：TaskGroup 退出时会等待所有子任务结束，
+/// 若被吊死的请求不响应取消，调用方仍会被拖住，兜底就白做了。这里超时即返回，
+/// 丢弃的请求由 `onTimeout` 重建会话来清理（invalidateAndCancel 会取消该会话的全部在途请求）。
+enum NetCall {
+    static func deadline<T: Sendable>(
+        _ seconds: Double,
+        op: String,
+        onTimeout: (@Sendable () -> Void)? = nil,
+        _ body: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let gate = OneShotGate<T>()
+        let latch = CancelLatch()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+                latch.mount { _ = gate.tryResume(cont, .failure(CancellationError())) }
+
+                // 用 detached：避免继承主 actor，保证计时器一定会准时触发
+                Task.detached(priority: .userInitiated) {
+                    do {
+                        let v = try await body()
+                        _ = gate.tryResume(cont, .success(v))
+                    } catch {
+                        _ = gate.tryResume(cont, .failure(error))
+                    }
+                }
+                Task.detached(priority: .high) {
+                    try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                    guard gate.tryResume(cont, .failure(NetTimeout(seconds: seconds, op: op))) else { return }
+                    onTimeout?()
+                }
+            }
+        } onCancel: {
+            latch.fire()
+        }
+    }
+}
+
+// MARK: - 请求健康度（连续失败 → 触发自愈选路）
+
+/// 只统计「链路层」失败：连续失败达到阈值即回调一次，由 AppSettings 重新在内外网间选路。
+/// 触发后计数归零并进入冷却，避免网络抖动时来回翻面。
+final class NetHealth: @unchecked Sendable {
+    static let shared = NetHealth()
+
+    /// 连续失败阈值（一次抖动不切，两次才认为这一侧真不通）
+    static let threshold = 2
+    /// 两次自愈之间的最小间隔
+    static let cooldown: TimeInterval = 20
+
+    private let lock = NSLock()
+    private var consecutive = 0
+    private var lastKick = Date.distantPast
+
+    /// 主线程回调，参数为最后一次失败原因
+    var onRepeatedFailure: ((String) -> Void)?
+
+    private init() {}
+
+    func noteSuccess() {
+        lock.lock()
+        consecutive = 0
+        lock.unlock()
+    }
+
+    /// 记录一次链路失败；返回 true 表示本次触发了自愈
+    @discardableResult
+    func noteFailure(_ reason: String) -> Bool {
+        lock.lock()
+        consecutive += 1
+        let n = consecutive
+        let cooling = Date().timeIntervalSince(lastKick) < Self.cooldown
+        let fire = (n >= Self.threshold) && !cooling
+        if fire {
+            consecutive = 0
+            lastKick = Date()
+        }
+        lock.unlock()
+
+        guard fire, let cb = onRepeatedFailure else { return false }
+        DispatchQueue.main.async { cb(reason) }
+        return true
+    }
+
+    /// 手动改地址 / 重置配置后清零计数
+    func reset() {
+        lock.lock()
+        consecutive = 0
+        lock.unlock()
+    }
+}
+
 // MARK: - URLSession 会话（统一超时策略）
 
 enum NetTransport {
-    /// 常规 API 会话：查询本身 <5s，20s 请求 / 60s 总时长足够让失败尽早显形
-    static let api: URLSession = {
+    private static let apiLock = NSLock()
+    private static var apiSession = makeAPI()
+
+    /// 常规 API 会话：查询本身 <5s，20s 请求 / 60s 总时长足够让失败尽早显形。
+    /// 会话可整体重建（见 resetAPI）——共享会话一旦被吊死的连接占满，新请求会卡在等连接
+    /// 且不触发超时，这正是「用一段时间后突然连不上」的机制。调用方应每次现取，不要缓存。
+    static var api: URLSession {
+        apiLock.lock()
+        defer { apiLock.unlock() }
+        return apiSession
+    }
+
+    private static func makeAPI() -> URLSession {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
         cfg.timeoutIntervalForResource = 60
+        // 不允许「等待网络可用」：宁可快速失败也不无限期挂着
+        cfg.waitsForConnectivity = false
+        // 缓存由 App 自己管（图片缓存 / 每次重拉数据），避免拿到过期或错误响应
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
         return URLSession(configuration: cfg)
-    }()
+    }
+
+    /// 重建 API 会话并丢弃旧连接（硬超时 / 连续失败后调用）。
+    /// 不重建的话，吊死的连接会一直占着连接池，后续请求全部排队等待。
+    static func resetAPI(reason: String) {
+        apiLock.lock()
+        let old = apiSession
+        apiSession = makeAPI()
+        apiLock.unlock()
+        old.invalidateAndCancel()
+        NetLog.shared.record(category: .diag, level: .warn, title: "重建网络会话", message: reason)
+    }
+
+    private static let imageLock = NSLock()
+    private static var imageSession = makeImage()
 
     /// 图片会话：resource 是「总时长」上限（request 超时只是空闲计时，慢速滴流会一直续命），
-    /// 30s 封底保证任何情况下转圈都会结束
-    static let image: URLSession = {
+    /// 30s 封底保证任何情况下转圈都会结束。
+    /// 关闭 URLCache：图片缓存由 ImageCache 负责，若走系统缓存会把错误页以 0ms 重放。
+    /// 与 api 一样可重建，避免连接池被吊死的连接占满（网格里几十张图并发时更容易发生）。
+    static var image: URLSession {
+        imageLock.lock()
+        defer { imageLock.unlock() }
+        return imageSession
+    }
+
+    private static func makeImage() -> URLSession {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 15
         cfg.timeoutIntervalForResource = 30
         cfg.waitsForConnectivity = false
         cfg.httpMaximumConnectionsPerHost = 6
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
         return URLSession(configuration: cfg)
-    }()
+    }
+
+    /// 重建图片会话并丢弃旧连接（图片下载硬超时后调用）
+    static func resetImage(reason: String) {
+        imageLock.lock()
+        let old = imageSession
+        imageSession = makeImage()
+        imageLock.unlock()
+        old.invalidateAndCancel()
+        NetLog.shared.record(category: .diag, level: .warn, title: "重建图片会话", message: reason)
+    }
 
     /// 绕过系统代理的直连会话（诊断对比用）：可区分「系统代理吊死」与「本地网络权限挂起」
     static let direct: URLSession = {
@@ -108,6 +335,8 @@ enum NetTransport {
         cfg.timeoutIntervalForRequest = 6
         cfg.timeoutIntervalForResource = 10
         cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
         return URLSession(configuration: cfg)
     }()
 }

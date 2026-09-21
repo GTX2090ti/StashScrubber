@@ -387,11 +387,14 @@ extension View {
     }
 }
 
-// MARK: - 空状态
+// MARK: - 空状态 / 加载失败
 
 struct EmptyStateView: View {
     let title: String
     let hint: String
+    /// 可选：给空状态加一个重试入口（网络异常时比「下拉刷新」提示更直接）
+    var retryTitle: String? = nil
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12) {
@@ -403,6 +406,45 @@ struct EmptyStateView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            if let retryTitle, let onRetry {
+                Button {
+                    onRetry()
+                } label: {
+                    Label(retryTitle, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+}
+
+/// 加载卡住 / 超时：中置提示 + 重试按钮。
+/// 用于替代「永久转圈」——网络层卡死时用户至少知道发生了什么并能自救。
+struct LoadRetryView: View {
+    let title: String
+    let hint: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 40))
+                .foregroundStyle(.orange)
+            Text(title).font(.headline)
+            Text(hint)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                retry()
+            } label: {
+                Label("重试", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()

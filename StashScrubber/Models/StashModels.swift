@@ -14,11 +14,13 @@ struct Studio: Codable, Hashable, Identifiable {
     var details: String?
     var imagePath: String?
     var rating100: Int?
+    var sceneCount: Int?
     var tags: [Tag]?
 
     enum CodingKeys: String, CodingKey {
         case id, name, url, details, rating100, tags
         case imagePath = "image_path"
+        case sceneCount = "scene_count"
     }
 }
 
@@ -116,6 +118,11 @@ struct ScenePage: Codable {
 struct PerformerPage: Codable {
     let count: Int
     let performers: [Performer]
+}
+
+struct StudioPage: Codable {
+    let count: Int
+    let studios: [Studio]
 }
 
 // MARK: - 刮削器描述

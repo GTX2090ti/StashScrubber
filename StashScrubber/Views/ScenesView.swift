@@ -13,11 +13,17 @@ final class SceneListViewModel: ObservableObject {
     @Published var sort: String = "date"
     @Published var direction: String = "DESC"
     @Published var filter = SceneFilterState()
+    /// 加载卡住（网络层未按期返回）：显示重试入口，避免页面永久转圈
+    @Published var timedOut = false
 
     private var page = 1
     private var lastQuery = ""
     private var lastSort = ""
     private var lastDirection = ""
+    /// 请求代号：reload 时自增，迟到的旧响应据此丢弃，不覆盖新结果
+    private var generation = 0
+    /// 看门狗秒数：超过即认为网络层卡死（API 硬超时 25s + 解析余量）
+    static let watchdogSeconds: Double = 30
 
     var canLoadMore: Bool { scenes.count < total && total > 0 }
 
@@ -27,13 +33,34 @@ final class SceneListViewModel: ObservableObject {
         lastSort = sort
         lastDirection = direction
         scenes = []
-        await load()
+        error = nil
+        timedOut = false
+        generation += 1
+        await fetch(gen: generation)
     }
 
+    /// 分页「加载更多」（同一代内防重入）
     func load() async {
         guard !loading else { return }
+        await fetch(gen: generation)
+    }
+
+    /// 重试：清空并重新拉第一页
+    func retry() async { await reload() }
+
+    private func fetch(gen: Int) async {
         loading = true
-        defer { loading = false }
+        // 只有「当前代号」的请求结束才复位 loading：
+        // 否则迟到的旧请求（或永不到达的旧请求）会把新请求的加载态弄丢 / 弄乱
+        defer { if gen == generation { loading = false } }
+
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.watchdogSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.timedOut = true
+        }
+        defer { watchdog.cancel() }
+
         do {
             let client = try AppSettings.shared.makeClient()
             let p = try await StashAPI.findScenes(
@@ -42,12 +69,33 @@ final class SceneListViewModel: ObservableObject {
                 direction: lastDirection.isEmpty ? direction : lastDirection,
                 sceneFilter: filter.toSceneFilter()
             )
+            guard gen == generation else { return }   // 过期响应：丢弃
+            timedOut = false
             total = p.count
             if page == 1 { scenes = p.scenes } else { scenes += p.scenes }
             page += 1
+            error = nil
+            AppSettings.shared.markSynced()
         } catch {
-            self.error = NetError.friendly(error)
+            guard gen == generation else { return }
+            if !NetError.isCancellation(error) {
+                self.error = NetError.friendly(error)
+            }
         }
+    }
+}
+
+/// 记录列表「顶部可见短片」：从详情页返回时据此恢复原位。
+/// 用引用类型承载 —— 滚动中会持续更新，但不进 @Published，避免每帧重绘整个网格。
+final class SceneScrollAnchor {
+    var topID: String?
+}
+
+/// 收集各短片在滚动容器内的纵坐标，用于推算顶部可见项
+private struct SceneVisibleOffsetKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
@@ -56,7 +104,13 @@ struct ScenesView: View {
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("scenes.viewMode") private var viewMode: String = "grid"   // grid=一排3个 / list=列表
     @State private var showFilter = false
+    /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
+    @State private var path = NavigationPath()
+    @State private var anchor = SceneScrollAnchor()
     @Environment(\.horizontalSizeClass) private var hSizeClass
+
+    /// 滚动容器坐标空间名（用于取各短片相对滚动内容的纵坐标）
+    private static let scrollSpace = "scenes.scroll"
 
     /// iPhone（compact）固定 3 列；iPad（regular）自适应列宽约 140pt，自动排更多列
     private var gridColumns: [GridItem] {
@@ -67,74 +121,120 @@ struct ScenesView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("短片")
-                .searchable(text: $vm.query, prompt: "搜索短片标题 / 简介")
-                .onSubmit(of: .search) { Task { await vm.reload() } }
-                .refreshable { await vm.reload() }
-                // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
-                .task(id: settings.reloadKey) { await vm.reload() }
-                .errorAlert($vm.error)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            viewMode = (viewMode == "grid") ? "list" : "grid"
-                        } label: {
-                            Label(viewMode == "grid" ? "列表视图" : "网格视图",
-                                  systemImage: viewMode == "grid" ? "list.bullet" : "square.grid.2x2")
-                        }
-                        Button {
-                            showFilter = true
-                        } label: {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: "line.3.horizontal.decrease.circle")
-                                if vm.filter.activeCount > 0 {
-                                    Text("\(vm.filter.activeCount)")
-                                        .font(.caption2.weight(.bold))
-                                        .padding(3)
-                                        .background(Circle().fill(Color.red))
-                                        .foregroundStyle(.white)
-                                        .offset(x: 8, y: -8)
-                                }
-                            }
-                        }
-                        Menu {
-                            Picker("排序", selection: $vm.sort) {
-                                Text("日期").tag("date")
-                                Text("标题").tag("title")
-                                Text("评分").tag("rating")
-                                Text("O 计数").tag("o_counter")
-                            }
-                            Button {
-                                vm.direction = vm.direction == "DESC" ? "ASC" : "DESC"
-                            } label: {
-                                Label(vm.direction == "DESC" ? "降序" : "升序",
-                                      systemImage: vm.direction == "DESC" ? "arrow.down" : "arrow.up")
-                            }
-                        } label: {
-                            Image(systemName: "arrow.up.arrow.down")
-                        }
-                    }
-                }
-                .onChange(of: vm.sort) { _ in Task { await vm.reload() } }
-                .onChange(of: vm.direction) { _ in Task { await vm.reload() } }
-                .sheet(isPresented: $showFilter) {
-                    SceneFilterSheet(state: $vm.filter) {
+        NavigationStack(path: $path) {
+            ScrollViewReader { proxy in
+                content
+                    .navigationTitle("短片")
+                    .searchable(text: $vm.query, prompt: "搜索短片标题 / 简介")
+                    .onSubmit(of: .search) {
+                        anchor.topID = nil
                         Task { await vm.reload() }
                     }
-                }
+                    .refreshable {
+                        anchor.topID = nil
+                        await vm.reload()
+                    }
+                    // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
+                    .task(id: settings.reloadKey) {
+                        anchor.topID = nil
+                        await vm.reload()
+                    }
+                    .errorAlert($vm.error)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
+                        ToolbarItemGroup(placement: .topBarTrailing) {
+                            Button {
+                                viewMode = (viewMode == "grid") ? "list" : "grid"
+                                anchor.topID = nil
+                            } label: {
+                                Label(viewMode == "grid" ? "列表视图" : "网格视图",
+                                      systemImage: viewMode == "grid" ? "list.bullet" : "square.grid.2x2")
+                            }
+                            Button {
+                                showFilter = true
+                            } label: {
+                                ZStack(alignment: .topTrailing) {
+                                    Image(systemName: "line.3.horizontal.decrease.circle")
+                                    if vm.filter.activeCount > 0 {
+                                        Text("\(vm.filter.activeCount)")
+                                            .font(.caption2.weight(.bold))
+                                            .padding(3)
+                                            .background(Circle().fill(Color.red))
+                                            .foregroundStyle(.white)
+                                            .offset(x: 8, y: -8)
+                                    }
+                                }
+                            }
+                            Menu {
+                                Picker("排序", selection: $vm.sort) {
+                                    Text("日期").tag("date")
+                                    Text("标题").tag("title")
+                                    Text("评分").tag("rating")
+                                    Text("O 计数").tag("o_counter")
+                                }
+                                Button {
+                                    vm.direction = vm.direction == "DESC" ? "ASC" : "DESC"
+                                } label: {
+                                    Label(vm.direction == "DESC" ? "降序" : "升序",
+                                          systemImage: vm.direction == "DESC" ? "arrow.down" : "arrow.up")
+                                }
+                            } label: {
+                                Image(systemName: "arrow.up.arrow.down")
+                            }
+                        }
+                    }
+                    .onChange(of: vm.sort) { _ in
+                        anchor.topID = nil
+                        Task { await vm.reload() }
+                    }
+                    .onChange(of: vm.direction) { _ in
+                        anchor.topID = nil
+                        Task { await vm.reload() }
+                    }
+                    .sheet(isPresented: $showFilter) {
+                        SceneFilterSheet(state: $vm.filter) {
+                            anchor.topID = nil
+                            Task { await vm.reload() }
+                        }
+                    }
+            }
+            // 从详情页返回列表根：滚回进入前的位置
+            .onChange(of: path.count) { count in
+                if count == 0 { restoreScroll(proxy) }
+            }
+            // 导航目的地统一注册在栈根，勿下移到条件分支里（否则列表数据刷新时可能短暂失效）
+            .navigationDestination(for: String.self) { id in
+                SceneDetailView(sceneID: id)
+            }
+            .navigationDestination(for: TagNavID.self) { t in
+                TagDetailView(tagID: t.id, tagName: t.name)
+            }
+            .navigationDestination(for: StudioNavID.self) { st in
+                StudioDetailView(studioID: st.id, studioName: st.name)
+            }
+            .navigationDestination(for: PerformerNavID.self) { pv in
+                PerformerDetailView(performerID: pv.id)
+            }
         }
     }
 
     @ViewBuilder
     private var content: some View {
         if vm.loading && vm.scenes.isEmpty {
-            ProgressView("加载中…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if vm.timedOut {
+                LoadRetryView(
+                    title: "加载超时",
+                    hint: "请求超过 \(Int(SceneListViewModel.watchdogSeconds)) 秒仍未返回，可能是网络切换或连接卡住。\n可重试，或到 设置 → 网络 查看网络日志。"
+                ) {
+                    Task { await vm.reload() }
+                }
+            } else {
+                ProgressView("加载中…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else if vm.scenes.isEmpty {
-            EmptyStateView(title: "没有短片", hint: "下拉刷新，或检查服务器与过滤条件")
+            EmptyStateView(title: "没有短片", hint: "下拉刷新，或检查服务器与过滤条件",
+                           retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
                 if viewMode == "grid" {
@@ -145,6 +245,8 @@ struct ScenesView: View {
                                 SceneCard(scene: s)
                             }
                             .buttonStyle(.plain)
+                            .id(s.id)
+                            .background(scrollProbe(s.id))
                         }
                     }
                     .padding(.horizontal)
@@ -156,6 +258,8 @@ struct ScenesView: View {
                                 SceneRow(scene: s)
                             }
                             .buttonStyle(.plain)
+                            .id(s.id)
+                            .background(scrollProbe(s.id))
                             Divider()
                         }
                     }
@@ -175,18 +279,43 @@ struct ScenesView: View {
                     .padding(.vertical, 16)
                 }
             }
-            .navigationDestination(for: String.self) { id in
-                SceneDetailView(sceneID: id)
+            .coordinateSpace(name: Self.scrollSpace)
+            .onPreferenceChange(SceneVisibleOffsetKey.self) { dict in
+                updateTopVisible(dict)
             }
-            .navigationDestination(for: TagNavID.self) { t in
-                TagDetailView(tagID: t.id, tagName: t.name)
-            }
-            .navigationDestination(for: StudioNavID.self) { st in
-                StudioDetailView(studioID: st.id, studioName: st.name)
-            }
-            .navigationDestination(for: PerformerNavID.self) { pv in
-                PerformerDetailView(performerID: pv.id)
-            }
+        }
+    }
+
+    /// 卡片背面的零尺寸探针：上报该短片相对滚动内容的纵坐标
+    private func scrollProbe(_ id: String) -> some View {
+        GeometryReader { g in
+            Color.clear.preference(
+                key: SceneVisibleOffsetKey.self,
+                value: [id: g.frame(in: .named(Self.scrollSpace)).minY]
+            )
+        }
+    }
+
+    /// 顶部可见项 = 纵坐标 ≤ 0 且最接近 0 者；若全为正值（仍在列表顶端）则取最小者
+    private func updateTopVisible(_ offsets: [String: CGFloat]) {
+        guard !offsets.isEmpty else { return }
+        let seen = offsets.filter { $0.value <= 1 }
+        if let top = seen.max(by: { $0.value < $1.value })?.key {
+            anchor.topID = top
+        } else if let first = offsets.min(by: { $0.value < $1.value })?.key {
+            anchor.topID = first
+        }
+    }
+
+    /// 从详情返回时滚回进入前的顶部短片（关掉动画，避免「先回顶部再滑下来」的闪动）
+    private func restoreScroll(_ proxy: ScrollViewProxy) {
+        guard let id = anchor.topID,
+              vm.scenes.contains(where: { $0.id == id }) else { return }
+        // 等一拍：返回后的布局尚未落定，立刻 scrollTo 会被忽略
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
         }
     }
 }

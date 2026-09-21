@@ -9,8 +9,15 @@ final class PerformerListViewModel: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     @Published var total = 0
+    /// 加载卡住（网络层未按期返回）：显示重试入口，避免页面永久转圈
+    @Published var timedOut = false
+
     private var page = 1
     private var lastQuery = ""
+    /// 请求代号：reload 时自增，迟到的旧响应据此丢弃
+    private var generation = 0
+    /// 看门狗秒数：超过即认为网络层卡死（API 硬超时 25s + 解析余量）
+    static let watchdogSeconds: Double = 30
 
     var canLoadMore: Bool { performers.count < total && total > 0 }
 
@@ -18,52 +25,135 @@ final class PerformerListViewModel: ObservableObject {
         page = 1
         lastQuery = query
         performers = []
-        await load()
+        error = nil
+        timedOut = false
+        generation += 1
+        await fetch(gen: generation)
     }
 
+    /// 分页「加载更多」（同一代内防重入）
     func load() async {
         guard !loading else { return }
+        await fetch(gen: generation)
+    }
+
+    /// 重试：清空并重新拉第一页
+    func retry() async { await reload() }
+
+    private func fetch(gen: Int) async {
         loading = true
-        defer { loading = false }
+        defer { if gen == generation { loading = false } }
+
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.watchdogSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.timedOut = true
+        }
+        defer { watchdog.cancel() }
+
         do {
             let client = try AppSettings.shared.makeClient()
             let p = try await StashAPI.findPerformers(client, query: lastQuery, page: page)
+            guard gen == generation else { return }   // 过期响应：丢弃
+            timedOut = false
             total = p.count
             if page == 1 { performers = p.performers } else { performers += p.performers }
             page += 1
+            error = nil
+            AppSettings.shared.markSynced()
         } catch {
-            self.error = NetError.friendly(error)
+            guard gen == generation else { return }
+            if !NetError.isCancellation(error) {
+                self.error = NetError.friendly(error)
+            }
         }
+    }
+}
+
+/// 记录列表「顶部可见演员」：从详情页返回时据此恢复原位（与短片页同策略）
+final class PerformerScrollAnchor {
+    var topID: String?
+}
+
+/// 收集各演员卡片在滚动容器内的纵坐标，用于推算顶部可见项
+private struct PerformerVisibleOffsetKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
 struct PerformersView: View {
     @StateObject private var vm = PerformerListViewModel()
     @EnvironmentObject private var settings: AppSettings
+    /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
+    @State private var path = NavigationPath()
+    @State private var anchor = PerformerScrollAnchor()
+
+    /// 滚动容器坐标空间名（用于取各卡片相对滚动内容的纵坐标）
+    private static let scrollSpace = "performers.scroll"
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("演员")
-                .searchable(text: $vm.query, prompt: "搜索演员名称")
-                .onSubmit(of: .search) { Task { await vm.reload() } }
-                .refreshable { await vm.reload() }
-                // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
-                .task(id: settings.reloadKey) { await vm.reload() }
-                .errorAlert($vm.error)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
-                }
+        NavigationStack(path: $path) {
+            ScrollViewReader { proxy in
+                content
+                    .navigationTitle("演员")
+                    .searchable(text: $vm.query, prompt: "搜索演员名称")
+                    .onSubmit(of: .search) {
+                        anchor.topID = nil
+                        Task { await vm.reload() }
+                    }
+                    .refreshable {
+                        anchor.topID = nil
+                        await vm.reload()
+                    }
+                    // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
+                    .task(id: settings.reloadKey) {
+                        anchor.topID = nil
+                        await vm.reload()
+                    }
+                    .errorAlert($vm.error)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
+                    }
+            }
+            // 从详情页返回列表根：滚回进入前的位置
+            .onChange(of: path.count) { count in
+                if count == 0 { restoreScroll(proxy) }
+            }
+            // 导航目的地统一注册在栈根，勿下移到条件分支里（否则列表数据刷新时可能短暂失效）
+            .navigationDestination(for: String.self) { id in
+                SceneDetailView(sceneID: id)
+            }
+            .navigationDestination(for: PerformerNavID.self) { pv in
+                PerformerDetailView(performerID: pv.id)
+            }
+            .navigationDestination(for: TagNavID.self) { t in
+                TagDetailView(tagID: t.id, tagName: t.name)
+            }
+            .navigationDestination(for: StudioNavID.self) { st in
+                StudioDetailView(studioID: st.id, studioName: st.name)
+            }
         }
     }
 
     @ViewBuilder
     private var content: some View {
         if vm.loading && vm.performers.isEmpty {
-            ProgressView("加载中…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if vm.timedOut {
+                LoadRetryView(
+                    title: "加载超时",
+                    hint: "请求超过 \(Int(PerformerListViewModel.watchdogSeconds)) 秒仍未返回，可能是网络切换或连接卡住。\n可重试，或到 设置 → 网络 查看网络日志。"
+                ) {
+                    Task { await vm.reload() }
+                }
+            } else {
+                ProgressView("加载中…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else if vm.performers.isEmpty {
-            EmptyStateView(title: "没有演员", hint: "下拉刷新，或检查服务器与过滤条件")
+            EmptyStateView(title: "没有演员", hint: "下拉刷新，或检查服务器与过滤条件",
+                           retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 18) {
@@ -72,6 +162,8 @@ struct PerformersView: View {
                             PerformerCard(performer: p)
                         }
                         .buttonStyle(.plain)
+                        .id(p.id)
+                        .background(scrollProbe(p.id))
                     }
                 }
                 .padding(.horizontal)
@@ -86,18 +178,42 @@ struct PerformersView: View {
                     .padding(.vertical, 16)
                 }
             }
-            .navigationDestination(for: String.self) { id in
-                SceneDetailView(sceneID: id)
+            .coordinateSpace(name: Self.scrollSpace)
+            .onPreferenceChange(PerformerVisibleOffsetKey.self) { dict in
+                updateTopVisible(dict)
             }
-            .navigationDestination(for: PerformerNavID.self) { pv in
-                PerformerDetailView(performerID: pv.id)
-            }
-            .navigationDestination(for: TagNavID.self) { t in
-                TagDetailView(tagID: t.id, tagName: t.name)
-            }
-            .navigationDestination(for: StudioNavID.self) { st in
-                StudioDetailView(studioID: st.id, studioName: st.name)
-            }
+        }
+    }
+
+    /// 卡片背面的零尺寸探针：上报该演员卡片相对滚动内容的纵坐标
+    private func scrollProbe(_ id: String) -> some View {
+        GeometryReader { g in
+            Color.clear.preference(
+                key: PerformerVisibleOffsetKey.self,
+                value: [id: g.frame(in: .named(Self.scrollSpace)).minY]
+            )
+        }
+    }
+
+    /// 顶部可见项 = 纵坐标 ≤ 0 且最接近 0 者；若全为正值（仍在列表顶端）则取最小者
+    private func updateTopVisible(_ offsets: [String: CGFloat]) {
+        guard !offsets.isEmpty else { return }
+        let seen = offsets.filter { $0.value <= 1 }
+        if let top = seen.max(by: { $0.value < $1.value })?.key {
+            anchor.topID = top
+        } else if let first = offsets.min(by: { $0.value < $1.value })?.key {
+            anchor.topID = first
+        }
+    }
+
+    /// 从详情返回时滚回进入前的顶部演员（关掉动画，避免闪动）
+    private func restoreScroll(_ proxy: ScrollViewProxy) {
+        guard let id = anchor.topID,
+              vm.performers.contains(where: { $0.id == id }) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
         }
     }
 }

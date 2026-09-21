@@ -53,8 +53,12 @@ final class GraphQLClient {
     let apiKey: String?
     /// 档案名（用于日志区分内网 / 外网）
     let profileName: String
-    private let session: URLSession
     private let logTitle: String
+
+    /// 常规请求硬超时（秒）：服务器侧查询本身 <5s，25s 是「链路已死」的判据
+    static let hardTimeout: Double = 25
+    /// 长耗时请求硬超时（秒）：刮削 / 识别要由服务端去外部站点取数，给足时间
+    static let longTimeout: Double = 120
 
     /// - Parameters:
     ///   - baseURL: 形如 http://192.168.2.210:9999 或 https://stash.example.com/stash（支持路径前缀，适配外网反代）
@@ -67,12 +71,14 @@ final class GraphQLClient {
         self.url = u
         self.apiKey = (apiKey?.isEmpty == false) ? apiKey : nil
         self.profileName = profileName
-        self.session = NetTransport.api
         self.logTitle = "GraphQL · " + (profileName.isEmpty ? "未命名档案" : profileName)
     }
 
     /// 发送 GraphQL 请求并解码 data 节点
-    func send<T: Decodable>(_ query: String, variables: [String: Any] = [:], as type: T.Type) async throws -> T {
+    /// - Parameter timeout: 硬超时秒数（默认 `hardTimeout`；刮削 / 识别类请传 `longTimeout`）
+    func send<T: Decodable>(_ query: String, variables: [String: Any] = [:],
+                            as type: T.Type,
+                            timeout: Double = GraphQLClient.hardTimeout) async throws -> T {
         var body: [String: Any] = ["query": query]
         if !variables.isEmpty { body["variables"] = variables }
 
@@ -84,20 +90,30 @@ final class GraphQLClient {
 
         let op = Self.operationName(query)
         let t0 = Date()
+        let title = logTitle
         func elapsedMs() -> Double { Date().timeIntervalSince(t0) * 1000 }
 
         do {
-            let (data, resp) = try await session.data(for: req)
-            let status = (resp as? HTTPURLResponse)?.statusCode
+            // 硬超时兜底：URLSession 自身超时在连接池被吊死 / 网络切换等场景会失灵，
+            // 到点强制返回并重建会话（丢掉吊死连接），保证视图 loading 状态一定复位。
+            let r = try await NetCall.deadline(timeout, op: op, onTimeout: {
+                NetTransport.resetAPI(reason: "\(title) 请求硬超时（\(op)），重建会话丢弃吊死连接")
+            }) {
+                // 每次现取会话：resetAPI 之后仍能拿到新会话
+                let (d, resp) = try await NetTransport.api.data(for: req)
+                return NetHTTPResult(data: d, status: (resp as? HTTPURLResponse)?.statusCode)
+            }
+            let data = r.data
+            let httpStatus = r.status
 
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            guard let code = httpStatus, (200..<300).contains(code) else {
                 let text = String(data: data, encoding: .utf8) ?? ""
                 NetLog.shared.record(category: .graphql, level: .error,
                                      title: "\(logTitle) · \(op)", method: "POST",
-                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     url: url.absoluteString, status: httpStatus, ms: elapsedMs(),
                                      bytes: data.count,
-                                     message: "HTTP \(status ?? 0)：\(text.prefix(150))")
-                throw StashAPIError.http(status ?? -1, text)
+                                     message: "HTTP \(httpStatus ?? 0)：\(text.prefix(150))")
+                throw StashAPIError.http(httpStatus ?? -1, text)
             }
 
             let env: Envelope<T>
@@ -106,7 +122,7 @@ final class GraphQLClient {
             } catch {
                 NetLog.shared.record(category: .graphql, level: .error,
                                      title: "\(logTitle) · \(op)", method: "POST",
-                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     url: url.absoluteString, status: httpStatus, ms: elapsedMs(),
                                      bytes: data.count,
                                      message: "解析失败：\(error.localizedDescription)")
                 throw StashAPIError.decoding(error.localizedDescription)
@@ -116,7 +132,7 @@ final class GraphQLClient {
                 let msgs = errs.map(\.message)
                 NetLog.shared.record(category: .graphql, level: .error,
                                      title: "\(logTitle) · \(op)", method: "POST",
-                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     url: url.absoluteString, status: httpStatus, ms: elapsedMs(),
                                      bytes: data.count,
                                      message: "Stash 返回：" + msgs.joined(separator: "; "))
                 throw StashAPIError.server(msgs)
@@ -126,16 +142,17 @@ final class GraphQLClient {
                 let text = String(data: data, encoding: .utf8) ?? ""
                 NetLog.shared.record(category: .graphql, level: .warn,
                                      title: "\(logTitle) · \(op)", method: "POST",
-                                     url: url.absoluteString, status: status, ms: elapsedMs(),
+                                     url: url.absoluteString, status: httpStatus, ms: elapsedMs(),
                                      bytes: data.count,
                                      message: "响应无 data 节点（对端可能不是 Stash）：\(text.prefix(150))")
-                throw StashAPIError.noData(status: status, body: text)
+                throw StashAPIError.noData(status: httpStatus, body: text)
             }
 
             NetLog.shared.record(category: .graphql, level: .info,
                                  title: "\(logTitle) · \(op)", method: "POST",
-                                 url: url.absoluteString, status: status, ms: elapsedMs(),
+                                 url: url.absoluteString, status: httpStatus, ms: elapsedMs(),
                                  bytes: data.count)
+            NetHealth.shared.noteSuccess()
             return d
         } catch {
             // 取消（页面切换 / 视图复用）属噪音，不入日志
@@ -146,6 +163,10 @@ final class GraphQLClient {
                                      title: "\(logTitle) · \(op)", method: "POST",
                                      url: url.absoluteString, ms: elapsedMs(),
                                      message: NetError.friendly(error))
+            }
+            // 链路层失败累加：连续两次即触发一次自动重新选路（内外网翻面自愈）
+            if NetError.isConnectivity(error) {
+                NetHealth.shared.noteFailure(NetError.friendly(error))
             }
             throw error
         }

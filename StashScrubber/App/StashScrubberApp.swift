@@ -53,7 +53,7 @@ struct ServerProfile: Codable, Identifiable, Equatable {
 // MARK: - 根视图：iPhone 用 TabView，iPad 用双栏 SplitView（均为原生组件）
 
 enum AppSection: Hashable {
-    case scenes, performers, settings
+    case scenes, performers, studios, settings
 }
 
 struct RootView: View {
@@ -84,6 +84,9 @@ struct TabRootView: View {
             PerformersView()
                 .tabItem { Label("演员", systemImage: "person.2") }
                 .tag(AppSection.performers)
+            StudiosView()
+                .tabItem { Label("工作室", systemImage: "building.2") }
+                .tag(AppSection.studios)
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(AppSection.settings)
@@ -103,6 +106,9 @@ struct SplitRootView: View {
                 NavigationLink(value: AppSection.performers) {
                     Label("演员", systemImage: "person.2")
                 }
+                NavigationLink(value: AppSection.studios) {
+                    Label("工作室", systemImage: "building.2")
+                }
                 NavigationLink(value: AppSection.settings) {
                     Label("设置", systemImage: "gearshape")
                 }
@@ -113,9 +119,10 @@ struct SplitRootView: View {
             switch selection {
             case .scenes: ScenesView()
             case .performers: PerformersView()
+            case .studios: StudiosView()
             case .settings: SettingsView()
             case nil:
-                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 短片 / 演员 / 设置")
+                EmptyStateView(title: "未选择板块", hint: "从侧边栏选择 短片 / 演员 / 工作室 / 设置")
             }
         }
     }
@@ -135,6 +142,8 @@ final class AppSettings: ObservableObject {
     private static let connKey = "stash.connections"
     private static let activeConnKey = "stash.activeConnectionID"
     private static let pinnedSlotKey = "stash.pinnedSlot"
+    /// 锁定是否由 WiFi 规则设置：离开该 WiFi 后必须自动解除，否则会被永久钉在不可达的一侧
+    private static let pinnedByRuleKey = "stash.pinnedSlotByRule"
     // 旧版键：迁移后保留不删，便于回退旧版本 App
     private static let legacyProfilesKey = "stash.profiles"
     private static let legacyActiveKey = "stash.activeProfileID"
@@ -151,6 +160,13 @@ final class AppSettings: ObservableObject {
     @Published private(set) var pinnedSlot: AddressSlot? {
         didSet {
             UserDefaults.standard.set(pinnedSlot?.rawValue, forKey: Self.pinnedSlotKey)
+        }
+    }
+    /// 锁定来源是否为 WiFi 规则。规则锁定必须在离开该 WiFi 时自动解除，
+    /// 否则用户出门后会被永久钉在不可达的内网地址上（「突然连不上」的典型成因）。
+    @Published private(set) var pinnedByRule = false {
+        didSet {
+            UserDefaults.standard.set(pinnedByRule, forKey: Self.pinnedByRuleKey)
         }
     }
     /// 最近一次选路结论（设置页 / 诊断页展示）
@@ -182,6 +198,8 @@ final class AppSettings: ObservableObject {
         connections = list
         activeConnectionID = restoredActive ?? list.first?.id
         pinnedSlot = restoredPin
+        // 没有锁定就谈不上「规则锁定」；锁定时沿用持久化的来源标记
+        pinnedByRule = (restoredPin != nil) && d.bool(forKey: Self.pinnedByRuleKey)
         let active = list.first { $0.id == activeConnectionID } ?? list.first
         activeSlot = restoredPin ?? (active?.preferredSlot ?? .lan)
 
@@ -189,6 +207,15 @@ final class AppSettings: ObservableObject {
         persistConnections()
         persistActive()
         UserDefaults.standard.set(pinnedSlot?.rawValue, forKey: Self.pinnedSlotKey)
+        UserDefaults.standard.set(pinnedByRule, forKey: Self.pinnedByRuleKey)
+
+        // 连续链路失败 → 自动重新选路（自愈）：
+        // 「用一段时间后突然连不上」不再只能靠用户去设置页手动点重新选路
+        NetHealth.shared.onRepeatedFailure = { [weak self] reason in
+            Task { @MainActor in
+                await self?.recoverFromFailure(reason)
+            }
+        }
     }
 
     // MARK: 默认值 / 迁移
@@ -324,7 +351,7 @@ final class AppSettings: ObservableObject {
     func addConnection(_ c: ServerConnection) {
         connections.append(c)
         activeConnectionID = c.id
-        pinnedSlot = nil
+        unpin()
         activeSlot = c.preferredSlot ?? .lan
         Task { await autoSelectSlot(force: true) }
     }
@@ -334,14 +361,14 @@ final class AppSettings: ObservableObject {
         if activeConnectionID == c.id {
             activeConnectionID = connections.first?.id
             activeSlot = activeConnection?.preferredSlot ?? .lan
-            pinnedSlot = nil
+            unpin()
         }
     }
 
     func switchToConnection(_ id: UUID) {
         guard connections.contains(where: { $0.id == id }) else { return }
         activeConnectionID = id
-        pinnedSlot = nil
+        unpin()
         activeSlot = activeConnection?.preferredSlot ?? .lan
         Task { await autoSelectSlot(force: true) }
     }
@@ -349,20 +376,43 @@ final class AppSettings: ObservableObject {
     /// 兼容旧调用：按运行时档案切换连接
     func switchTo(_ p: ServerProfile) { switchToConnection(p.id) }
 
-    /// 手动锁定到某一侧地址（工具栏菜单 / WiFi 规则）
-    func pin(_ slot: AddressSlot) {
+    /// 锁定到某一侧地址。
+    /// - Parameter byRule: true 表示由 WiFi 规则设置——离开该 WiFi 时必须能自动解除；
+    ///   手动锁定（工具栏菜单）则一直保留，直到用户自己切回自动。
+    func pin(_ slot: AddressSlot, byRule: Bool = false) {
         guard let c = activeConnection, c.availableSlots.contains(slot) else { return }
         pinnedSlot = slot
+        pinnedByRule = byRule
         activeSlot = slot
-        lastSwitchReason = "已手动指定使用\(slot.label)地址"
+        lastSwitchReason = byRule ? "WiFi 规则指定使用\(slot.label)地址"
+                                  : "已手动指定使用\(slot.label)地址"
         NetLog.shared.record(category: .diag, level: .info, title: "地址切换",
-                             message: lastSwitchReason)
+                             message: lastSwitchReason ?? "")
+    }
+
+    /// 解除锁定（内部统一入口，保证来源标记一并复位）
+    private func unpin() {
+        pinnedSlot = nil
+        pinnedByRule = false
     }
 
     /// 取消锁定，回到「优先内网、自动兜底」
     func clearPin() {
-        pinnedSlot = nil
+        unpin()
         Task { await autoSelectSlot(force: true) }
+    }
+
+    /// 离开规则 WiFi 时的解锁：仅解除「由 WiFi 规则设置」的锁定，不动手动锁定。
+    /// - Returns: 是否真的解除了一次规则锁定（供日志/界面提示）
+    @discardableResult
+    func releaseRulePin(reason: String) -> Bool {
+        guard pinnedByRule else { return false }
+        let old = pinnedSlot
+        unpin()
+        lastSwitchReason = reason
+        NetLog.shared.record(category: .wifi, level: .info, title: "解除地址锁定", message: reason)
+        if old != nil { Task { await autoSelectSlot(force: true) } }
+        return true
     }
 
     /// 记录一次成功同步（列表页成功拉到数据时调用）
@@ -394,7 +444,7 @@ final class AppSettings: ObservableObject {
 
         connections = [c]
         activeConnectionID = c.id
-        pinnedSlot = nil
+        unpin()
         activeSlot = c.preferredSlot ?? .lan
     }
 
@@ -411,8 +461,8 @@ final class AppSettings: ObservableObject {
             return
         }
 
-        // 锁定的一侧已被删除 / 地址类型已排除 → 自动解除锁定
-        if let pin = pinnedSlot, !slots.contains(pin) { pinnedSlot = nil }
+        // 锁定的一侧已被删除 / 地址类型已排除 → 自动解除锁定（含来源标记）
+        if let pin = pinnedSlot, !slots.contains(pin) { unpin() }
 
         // 1) 期望槽位：单侧配置 > WiFi 规则锁定 > 优先内网
         let target: AddressSlot
@@ -467,9 +517,61 @@ final class AppSettings: ObservableObject {
         let changed = activeSlot != slot
         activeSlot = slot
         lastSwitchReason = reason
+        // 每次选定地址都从零开始计失败次数：否则刚切过去就被上一侧的失败计数拖进自愈
+        NetHealth.shared.reset()
         if changed {
             NetLog.shared.record(category: .diag, level: .info, title: "地址切换", message: reason)
         }
+    }
+
+    // MARK: 失败自愈（连续链路失败后自动重新选路）
+
+    /// 连续请求失败（由 NetHealth 计数触发）后的自愈：
+    /// 优先验证「另一侧」地址，可达就切过去；若已被锁定则只记录结论。
+    /// 触发频率由 NetHealth 的阈值（连续 2 次）与冷却（20 秒）控制，不会来回抖动。
+    func recoverFromFailure(_ reason: String) async {
+        guard let c = activeConnection else { return }
+        // 只配了一侧地址：没有可切换的目标，仅刷新一次可达性供 UI 显示
+        guard c.availableSlots.count > 1 else {
+            if let u = c.url(for: activeSlot) {
+                await LatencyMonitor.shared.measure(url: u, apiKey: c.apiKey,
+                                                     name: "\(c.name) · \(activeSlot.label)",
+                                                     force: true)
+            }
+            return
+        }
+
+        NetLog.shared.record(category: .diag, level: .warn, title: "自动重试",
+                             message: "连续请求失败（\(reason)），准备重新选路")
+
+        // 手动锁定：尊重用户意图，只更新结论不去翻面
+        if pinnedSlot != nil, !pinnedByRule {
+            lastSwitchReason = "已手动锁定\(activeSlot.label)地址（连续失败：\(reason)）"
+            return
+        }
+        // WiFi 规则锁定但当前地址已连续失败（多半是已经离开那个网络，而 SSID 没认出来）
+        // → 解除规则锁定，让它自动兜底到另一侧，避免被永久钉在不可达地址上
+        if pinnedByRule {
+            let old = activeSlot.label
+            unpin()
+            NetLog.shared.record(category: .diag, level: .warn, title: "解除地址锁定",
+                                 message: "\(old)地址连续失败，解除 WiFi 规则锁定后自动重新选路")
+        }
+
+        if let other = c.availableSlots.first(where: { $0 != activeSlot }),
+           let otherURL = c.url(for: other) {
+            let r = await LatencyMonitor.shared.measure(url: otherURL, apiKey: c.apiKey,
+                                                        name: "\(c.name) · \(other.label)",
+                                                        force: true)
+            if r.isReachable {
+                apply(slot: other, reason: "原地址连续失败，已自动切到\(other.label)（\(r.text)）")
+                markSynced()
+                return
+            }
+        }
+
+        // 另一侧也不可达：走一次完整选路，更新结论与失败原因
+        await autoSelectSlot(force: true)
     }
 }
 
@@ -715,7 +817,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.18")
+            LabeledContent("版本", value: "1.5.19")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }

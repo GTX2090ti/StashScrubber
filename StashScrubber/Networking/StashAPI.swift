@@ -103,6 +103,26 @@ enum StashAPI {
         return p
     }
 
+    // MARK: 查询 - 工作室（浏览列表，带分页与搜索）
+
+    static func findStudios(
+        _ c: GraphQLClient, query: String = "", page: Int = 1, perPage: Int = 40
+    ) async throws -> StudioPage {
+        struct R: Decodable { let findStudios: StudioPage }
+        let q = """
+        query FindStudios($filter: FindFilterType!) {
+          findStudios(filter: $filter) {
+            count
+            studios { id name image_path rating100 scene_count }
+          }
+        }
+        """
+        var filter: [String: Any] = ["page": page, "per_page": perPage, "sort": "name", "direction": "ASC"]
+        if !query.isEmpty { filter["q"] = query }
+        let r: R = try await c.send(q, variables: ["filter": filter], as: R.self)
+        return r.findStudios
+    }
+
     // MARK: 标签 / 工作室（跳转校验 + 关联短片）
 
     /// 跳转前校验标签是否仍存在（被删的标签不再导航）
@@ -277,6 +297,9 @@ enum StashAPI {
     """
 
     // MARK: 削刮 - 场景
+    //
+    // 说明：刮削 / 识别由服务端去外部站点取数，耗时远超普通查询，统一传 longTimeout（120s），
+    // 不能沿用默认 25s 硬超时，否则慢抓取器会被误杀。
 
     /// 片段削刮（source = ["scraper_id": ...] 或 ["stash_box_index": Int]）
     static func scrapeSceneFragment(_ c: GraphQLClient, source: [String: Any], sceneId: String) async throws -> [ScrapedScene] {
@@ -288,7 +311,7 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: [
             "source": source, "input": ["scene_id": sceneId]
-        ], as: R.self)
+        ], as: R.self, timeout: GraphQLClient.longTimeout)
         return r.scrapeSingleScene.compactMap { $0 }
     }
 
@@ -302,7 +325,7 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: [
             "source": source, "input": ["query": query]
-        ], as: R.self)
+        ], as: R.self, timeout: GraphQLClient.longTimeout)
         return r.scrapeSingleScene.compactMap { $0 }
     }
 
@@ -314,7 +337,8 @@ enum StashAPI {
           scrapeSceneURL(url: $url) { \(scrapedSceneSelection) }
         }
         """
-        let r: R = try await c.send(q, variables: ["url": url], as: R.self)
+        let r: R = try await c.send(q, variables: ["url": url], as: R.self,
+                                   timeout: GraphQLClient.longTimeout)
         return r.scrapeSceneURL.map { [$0] } ?? []
     }
 
@@ -329,7 +353,7 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: [
             "source": source, "input": ["performer_id": performerId]
-        ], as: R.self)
+        ], as: R.self, timeout: GraphQLClient.longTimeout)
         return r.scrapeSinglePerformer.compactMap { $0 }
     }
 
@@ -342,7 +366,7 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: [
             "source": source, "input": ["query": query]
-        ], as: R.self)
+        ], as: R.self, timeout: GraphQLClient.longTimeout)
         return r.scrapeSinglePerformer.compactMap { $0 }
     }
 
@@ -354,7 +378,8 @@ enum StashAPI {
           scrapePerformerURL(url: $url) { \(scrapedPerformerSelection) }
         }
         """
-        let r: R = try await c.send(q, variables: ["url": url], as: R.self)
+        let r: R = try await c.send(q, variables: ["url": url], as: R.self,
+                                   timeout: GraphQLClient.longTimeout)
         return r.scrapePerformerURL.map { [$0] } ?? []
     }
 
@@ -450,19 +475,25 @@ enum StashAPI {
         req.timeoutInterval = 15
         let t0 = Date()
         do {
-            let (data, resp) = try await NetTransport.image.data(for: req)
+            // 硬超时兜底：与列表图片一致，避免刮削时某张图把整个流程拖住
+            let r = try await NetCall.deadline(30, op: "刮削图片下载", onTimeout: {
+                NetTransport.resetImage(reason: "刮削图片下载硬超时，重建图片会话")
+            }) {
+                let (d, resp) = try await NetTransport.image.data(for: req)
+                return NetHTTPResult(data: d, status: (resp as? HTTPURLResponse)?.statusCode)
+            }
+            let data = r.data
+            let rawStatus = r.status
             let ms = Date().timeIntervalSince(t0) * 1000
-            let http = resp as? HTTPURLResponse
-            guard let http, (200...299).contains(http.statusCode), !data.isEmpty else {
+            guard let code = rawStatus, (200...299).contains(code), !data.isEmpty else {
                 NetLog.shared.record(category: .image, level: .warn, title: "刮削图片下载",
-                                     method: "GET", url: ref, status: http?.statusCode, ms: ms,
+                                     method: "GET", url: ref, status: rawStatus, ms: ms,
                                      bytes: data.count, message: "非 2xx 或空响应，已跳过图片")
                 return nil
             }
-            let mime = http.value(forHTTPHeaderField: "Content-Type")?
-                .split(separator: ";").first.map(String.init) ?? "image/jpeg"
+            let mime = r.contentType?.split(separator: ";").first.map(String.init) ?? "image/jpeg"
             NetLog.shared.record(category: .image, level: .info, title: "刮削图片下载",
-                                 method: "GET", url: ref, status: http.statusCode, ms: ms,
+                                 method: "GET", url: ref, status: code, ms: ms,
                                  bytes: data.count, message: mime)
             return "data:\(mime);base64," + data.base64EncodedString()
         } catch {

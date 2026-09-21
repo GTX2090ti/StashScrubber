@@ -71,7 +71,7 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
     // MARK: 并发控制
 
     private let flightLock = NSLock()
-    private var inflight: [String: Task<Data?, Never>] = [:]
+    private var inflight: [String: Task<DownloadOutcome, Never>] = [:]
     /// 失败冷却：弱网时网格内几十张图同时失败会反复重试，拖住网络
     private var failedAt: [String: Date] = [:]
     private static let failureCooldown: TimeInterval = 20
@@ -128,18 +128,31 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
 
         // 4) 网络
         if inFailureCooldown(key) { return nil }
-        guard let data = await fetchData(url: url, apiKey: apiKey, key: key) else {
-            markFailure(key)
+        let outcome = await fetchData(url: url, apiKey: apiKey, key: key)
+        guard let data = outcome.data else {
+            // 取消（视图滚走 / 页面切换）不吃冷却；真实失败才进冷却，避免反复重拉坏图
+            if outcome.error != nil { markFailure(key) }
+            return nil
+        }
+        guard let img = UIImage(data: data) else {
+            // Stash 对缺省图返回 SVG 占位（如工作室 / 演员默认图）——属预期情况，记 info 不刷错误
+            let head = String(decoding: data.prefix(512), as: UTF8.self).lowercased()
+            let isSVG = head.contains("<svg") || (head.contains("<?xml") && head.contains("svg"))
+            let isHTML = head.contains("<!doctype html") || head.contains("<html")
+            NetLog.shared.record(category: .image,
+                                 level: isSVG ? .info : .warn,
+                                 title: isSVG ? "SVG 占位图（该条目无封面）" : "图片无法解码",
+                                 method: "GET", url: url.absoluteString, bytes: data.count,
+                                 message: isSVG
+                                     ? "Stash 返回 SVG 占位图，无实际封面"
+                                     : (isHTML
+                                        ? "返回的是 HTML 错误页（对端可能不是 Stash / 反代图片路径未放行）"
+                                        : "返回内容不是可解码的位图"))
+            // 非占位的解码失败同样进冷却：否则每次滚动都会重拉同一张坏图
+            if !isSVG { markFailure(key) }
             return nil
         }
         clearFailure(key)
-        guard let img = UIImage(data: data) else {
-            // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，UIImage 无法解码
-            NetLog.shared.record(category: .image, level: .warn, title: "图片无法解码",
-                                 method: "GET", url: url.absoluteString, bytes: data.count,
-                                 message: "返回内容不是可解码的位图（可能是 SVG 占位图或 HTML 错误页）")
-            return nil
-        }
         if Self.isEnabled {
             store(img, cost: Self.cost(of: img), key: key)
             writeToDisk(data: data, key: key)
@@ -159,21 +172,28 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
 
     // MARK: - 网络（同键合并 + 失败冷却）
 
-    private func fetchData(url: URL, apiKey: String, key: String) async -> Data? {
+    /// 下载结果：data 为 nil 时 error 非空表示真实失败（HTTP 错误 / 非图片 / 网络异常），
+    /// error 为空表示仅是被取消（调用方不应计入冷却）
+    private struct DownloadOutcome {
+        var data: Data?
+        var error: String?
+    }
+
+    private func fetchData(url: URL, apiKey: String, key: String) async -> DownloadOutcome {
         let task = flightTask(url: url, apiKey: apiKey, key: key)
         return await task.value
     }
 
-    private func flightTask(url: URL, apiKey: String, key: String) -> Task<Data?, Never> {
+    private func flightTask(url: URL, apiKey: String, key: String) -> Task<DownloadOutcome, Never> {
         flightLock.lock()
         if let t = inflight[key] {
             flightLock.unlock()
             return t
         }
-        let t = Task<Data?, Never> { [weak self] in
-            let data = await Self.download(url: url, apiKey: apiKey)
+        let t = Task<DownloadOutcome, Never> { [weak self] in
+            let outcome = await Self.download(url: url, apiKey: apiKey)
             _ = self?.finishFlight(key)
-            return data
+            return outcome
         }
         inflight[key] = t
         flightLock.unlock()
@@ -206,29 +226,64 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
         flightLock.unlock()
     }
 
-    private static func download(url: URL, apiKey: String) async -> Data? {
+    private static func download(url: URL, apiKey: String) async -> DownloadOutcome {
         var req = URLRequest(url: url)
         if !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
         let t0 = Date()
         do {
-            let (data, resp) = try await NetTransport.image.data(for: req)
+            // 硬超时兜底：图片会话的 URLSession 超时同样可能失灵（连接池被吊死），
+            // 35s 封底确保网格不会有一张图永远转圈；到点重建图片会话丢掉吊死连接。
+            let r = try await NetCall.deadline(35, op: "图片下载", onTimeout: {
+                NetTransport.resetImage(reason: "图片下载硬超时，重建图片会话丢弃吊死连接")
+            }) {
+                let (d, resp) = try await NetTransport.image.data(for: req)
+                let http = resp as? HTTPURLResponse
+                return NetHTTPResult(
+                    data: d,
+                    status: http?.statusCode,
+                    contentType: http?.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+                )
+            }
+            let data = r.data
+            let status = r.status
+            let ct = r.contentType ?? ""
             let ms = Date().timeIntervalSince(t0) * 1000
+
+            // 状态码校验：非 2xx 一律失败。此前不校验，500 错误页会被当成功数据往下传。
+            if let code = status, !(200...299).contains(code) {
+                let msg = "HTTP \(code)"
+                NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
+                                     method: "GET", url: url.absoluteString, status: code,
+                                     ms: ms, bytes: data.count, message: msg)
+                return DownloadOutcome(data: nil, error: msg)
+            }
+            // Content-Type 校验：Stash / 反代在异常时会以 200 返回 HTML 错误页，
+            // 这类响应必须在下载阶段就被判失败（进冷却），否则每次滚动都重拉同一张坏图。
+            if !ct.isEmpty, !ct.contains("image") {
+                let msg = "返回的不是图片（Content-Type: \(ct)，\(NetLog.byteText(data.count))）"
+                NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
+                                     method: "GET", url: url.absoluteString, status: status,
+                                     ms: ms, bytes: data.count, message: msg)
+                return DownloadOutcome(data: nil, error: msg)
+            }
             if NetLog.verboseImage {
                 NetLog.shared.record(category: .image, level: .info, title: "图片下载",
                                      method: "GET", url: url.absoluteString,
-                                     status: (resp as? HTTPURLResponse)?.statusCode,
-                                     ms: ms, bytes: data.count)
+                                     status: status, ms: ms, bytes: data.count,
+                                     message: ct.isEmpty ? nil : ct)
             }
-            return data
+            return DownloadOutcome(data: data, error: nil)
         } catch {
             // 视图复用 / 页面切换导致的取消：静默，不入日志、不冷却
-            if !NetError.isCancellation(error) {
-                NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
-                                     method: "GET", url: url.absoluteString,
-                                     ms: Date().timeIntervalSince(t0) * 1000,
-                                     message: NetError.friendly(error))
+            if NetError.isCancellation(error) {
+                return DownloadOutcome(data: nil, error: nil)
             }
-            return nil
+            let msg = NetError.friendly(error)
+            NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
+                                 method: "GET", url: url.absoluteString,
+                                 ms: Date().timeIntervalSince(t0) * 1000,
+                                 message: msg)
+            return DownloadOutcome(data: nil, error: msg)
         }
     }
 
