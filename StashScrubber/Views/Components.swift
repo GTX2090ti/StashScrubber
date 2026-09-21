@@ -156,7 +156,7 @@ extension UIImage {
 // MARK: - 智能裁剪门面（超时熔断，保证图片必定出图）
 
 /// 原子一次性领取：保证续体只被 resume 一次（Vision 线程与超时回调赛跑）
-private final class ResumeOnce {
+private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var claimed = false
     /// 返回 true 表示领取成功（可且仅可 resume 一次）
@@ -174,11 +174,12 @@ enum SmartCrop {
     /// 熔断标记：显著性请求一旦超时，判定该设备 Vision 推理不可用（iOS 26 ANECF 已知问题），后续全部走兜底
     private static var broken = false
 
+    /// 用 withLock 访问：NSLock 的 lock()/unlock() 在异步上下文被标为 noasync（Swift 6 下为错误）
+    private static var isBroken: Bool { lock.withLock { broken } }
+    private static func markBroken() { lock.withLock { broken = true } }
+
     static func run(_ img: UIImage, aspect: CGFloat) async -> UIImage {
-        lock.lock()
-        let skip = broken
-        lock.unlock()
-        if skip { return img.fallbackCropped(toAspect: aspect) }
+        if isBroken { return img.fallbackCropped(toAspect: aspect) }
 
         // 注意：不能用 TaskGroup 赛跑——组退出会隐式等待挂死的 Vision 子任务，超时失效。
         // 改用续体 + 原子领取：超时回调先到先得，挂死任务被遗弃（broken 熔断后不再新增）。
@@ -190,9 +191,7 @@ enum SmartCrop {
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
                 if once.claim() {
-                    lock.lock()
-                    broken = true
-                    lock.unlock()
+                    markBroken()
                     cont.resume(returning: img.fallbackCropped(toAspect: aspect))
                 }
             }

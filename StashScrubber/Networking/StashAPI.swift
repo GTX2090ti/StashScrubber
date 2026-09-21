@@ -473,13 +473,14 @@ enum StashAPI {
               scheme == "http" || scheme == "https" else { return nil }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
+        let request = req   // 交给 @Sendable 闭包前转不可变副本
         let t0 = Date()
         do {
             // 硬超时兜底：与列表图片一致，避免刮削时某张图把整个流程拖住
             let r = try await NetCall.deadline(30, op: "刮削图片下载", onTimeout: {
                 NetTransport.resetImage(reason: "刮削图片下载硬超时，重建图片会话")
             }) {
-                let (d, resp) = try await NetTransport.image.data(for: req)
+                let (d, resp) = try await NetTransport.image.data(for: request)
                 return NetHTTPResult(data: d, status: (resp as? HTTPURLResponse)?.statusCode)
             }
             let data = r.data

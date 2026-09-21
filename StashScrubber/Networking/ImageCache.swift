@@ -229,6 +229,7 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
     private static func download(url: URL, apiKey: String) async -> DownloadOutcome {
         var req = URLRequest(url: url)
         if !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
+        let request = req   // 交给 @Sendable 闭包前转不可变副本
         let t0 = Date()
         do {
             // 硬超时兜底：图片会话的 URLSession 超时同样可能失灵（连接池被吊死），
@@ -236,7 +237,7 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
             let r = try await NetCall.deadline(35, op: "图片下载", onTimeout: {
                 NetTransport.resetImage(reason: "图片下载硬超时，重建图片会话丢弃吊死连接")
             }) {
-                let (d, resp) = try await NetTransport.image.data(for: req)
+                let (d, resp) = try await NetTransport.image.data(for: request)
                 let http = resp as? HTTPURLResponse
                 return NetHTTPResult(
                     data: d,

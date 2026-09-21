@@ -127,7 +127,7 @@ struct SceneEditView: View {
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-            var input = SceneUpdateInput(
+            let input = SceneUpdateInput(
                 id: scene.id,
                 title: title.isEmpty ? nil : title,
                 details: details.isEmpty ? nil : details,

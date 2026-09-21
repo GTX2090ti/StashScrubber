@@ -30,7 +30,7 @@ enum StashEndpoint {
     /// 图片地址重写：主机与当前档案不一致时，改写为「档案基址 + 原路径与查询参数」，
     /// 使内网绝对地址在外网反代档案下也能加载。
     static func rewriteImage(_ raw: String, base: String) -> URL? {
-        guard !raw.isEmpty, var comps = URLComponents(string: raw), comps.host != nil else { return nil }
+        guard !raw.isEmpty, let comps = URLComponents(string: raw), comps.host != nil else { return nil }
         guard let bs = normalize(base),
               let bc = URLComponents(string: bs), bc.host != nil else { return comps.url }
         if comps.host == bc.host && comps.port == bc.port { return comps.url }

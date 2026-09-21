@@ -87,6 +87,8 @@ final class GraphQLClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let apiKey { req.setValue(apiKey, forHTTPHeaderField: "ApiKey") }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // 交给 @Sendable 闭包前复制成不可变值，避免「捕获可变 var」（Swift 6 下为错误）
+        let request = req
 
         let op = Self.operationName(query)
         let t0 = Date()
@@ -100,7 +102,7 @@ final class GraphQLClient {
                 NetTransport.resetAPI(reason: "\(title) 请求硬超时（\(op)），重建会话丢弃吊死连接")
             }) {
                 // 每次现取会话：resetAPI 之后仍能拿到新会话
-                let (d, resp) = try await NetTransport.api.data(for: req)
+                let (d, resp) = try await NetTransport.api.data(for: request)
                 return NetHTTPResult(data: d, status: (resp as? HTTPURLResponse)?.statusCode)
             }
             let data = r.data

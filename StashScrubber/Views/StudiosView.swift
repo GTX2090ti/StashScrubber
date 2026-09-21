@@ -126,10 +126,11 @@ struct StudiosView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
                     }
-            }
-            // 从详情页返回列表根：滚回进入前的位置
-            .onChange(of: path.count) { count in
-                if count == 0 { restoreScroll(proxy) }
+                    // 从详情页返回列表根：滚回进入前的位置
+                    // （proxy 只存在于 ScrollViewReader 闭包内，本修饰符必须写在闭包内部）
+                    .onChange(of: path.count) { count in
+                        if count == 0 { restoreScroll(proxy) }
+                    }
             }
             // 导航目的地统一注册在栈根，勿下移到条件分支里（否则列表数据刷新时可能短暂失效）
             .navigationDestination(for: StudioNavID.self) { st in

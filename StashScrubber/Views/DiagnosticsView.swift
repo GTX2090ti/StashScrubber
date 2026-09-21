@@ -158,11 +158,11 @@ struct DiagnosticsView: View {
             for t in targets {
                 group.addTask {
                     let r = await Self.probeGraphQL(t)
-                    var row = Self.row(for: r, title: "GraphQL · \(t.title)", isLAN: t.isLAN)
+                    var row = await Self.row(for: r, title: "GraphQL · \(t.title)", isLAN: t.isLAN)
                     // 系统代理对比：仅对失败地址做绕过代理的直连复测
                     if r.error != nil {
                         let d = await Self.probeGraphQL(t, direct: true)
-                        row = Self.withDirectCompare(primary: row, direct: d, isLAN: t.isLAN)
+                        row = await Self.withDirectCompare(primary: row, direct: d, isLAN: t.isLAN)
                     }
                     return [row]
                 }
