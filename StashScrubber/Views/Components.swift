@@ -20,9 +20,6 @@ struct RemoteImageView: View {
     @State private var image: UIImage?
     @State private var failed = false
 
-    /// 图片会话（含 resource 总时长封顶）统一来自 NetTransport.image
-    private static var session: URLSession { NetTransport.image }
-
     var body: some View {
         ZStack {
             Rectangle().fill(Color(UIColor.tertiarySystemFill))
@@ -49,6 +46,9 @@ struct RemoteImageView: View {
         return StashEndpoint.rewriteImage(s, base: AppSettings.shared.serverURL)
     }
 
+    /// 取图统一走 ImageCache（内存 → 磁盘 → 网络），命中缓存不再发起请求；
+    /// 智能裁剪结果同样被缓存，滚动时不会反复跑 Vision。
+    /// 下载、解码失败的日志由 ImageCache 统一记录。
     private func load() async {
         image = nil
         failed = false
@@ -58,45 +58,19 @@ struct RemoteImageView: View {
                                  url: urlString, message: "无法解析图片地址或当前档案未配置")
             return
         }
-        var req = URLRequest(url: url)
-        let key = AppSettings.shared.apiKey
-        if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "ApiKey") }
-        let t0 = Date()
-        do {
-            let (data, resp) = try await Self.session.data(for: req)
-            let ms = Date().timeIntervalSince(t0) * 1000
-            let status = (resp as? HTTPURLResponse)?.statusCode
-            // Stash 对缺省图返回 SVG 占位（如工作室默认图）、异常时返回 HTML，
-            // UIImage 无法解码这些格式 → 显示占位图标
-            if let img = UIImage(data: data) {
-                if NetLog.verboseImage {
-                    NetLog.shared.record(category: .image, level: .info, title: "图片",
-                                         method: "GET", url: url.absoluteString,
-                                         status: status, ms: ms, bytes: data.count)
-                }
-                if let aspect = smartCropAspect {
-                    // 智能裁剪移出主线程；Vision 请求在部分 iOS 26 设备上会挂死
-                    //（ANECF 推理故障，重启 App 也无效），必须带超时熔断兜底
-                    image = await SmartCrop.run(img, aspect: aspect)
-                } else {
-                    image = img
-                }
-            } else {
-                failed = true
-                NetLog.shared.record(category: .image, level: .warn, title: "图片无法解码",
-                                     method: "GET", url: url.absoluteString,
-                                     status: status, ms: ms, bytes: data.count,
-                                     message: "返回内容不是可解码的位图（可能是 SVG 占位图或 HTML 错误页）")
-            }
-        } catch {
-            // 视图复用 / 页面切换导致的任务取消：静默保持原状，不算失败，也不入日志
-            if !NetError.isCancellation(error) {
-                failed = true
-                NetLog.shared.record(category: .image, level: .error, title: "图片下载失败",
-                                     method: "GET", url: url.absoluteString,
-                                     ms: Date().timeIntervalSince(t0) * 1000,
-                                     message: NetError.friendly(error))
-            }
+        if let cached = ImageCache.shared.memoryImage(for: url, cropAspect: smartCropAspect) {
+            image = cached   // 内存命中：同步落位，滚动时不闪加载圈
+            return
+        }
+        let img = await ImageCache.shared.image(for: url,
+                                                apiKey: AppSettings.shared.apiKey,
+                                                cropAspect: smartCropAspect)
+        // 视图被复用/页面切走导致的任务取消：结果作废，不要覆盖新任务的加载态
+        if Task.isCancelled { return }
+        if let img {
+            image = img
+        } else {
+            failed = true
         }
     }
 }

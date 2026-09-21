@@ -225,6 +225,9 @@ struct ServerSwitcherMenu: View {
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("stash.serverSetupDone") private var serverSetupDone = false
+    @AppStorage(ImageCache.enabledKey) private var cacheEnabled = true
+    @AppStorage(ImageCache.limitMBKey) private var cacheLimitMB = ImageCache.defaultLimitMB
+    @ObservedObject private var cache = ImageCache.shared
     @State private var testing = false
     @State private var testResult: String?
     @State private var error: String?
@@ -333,6 +336,32 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("启用图片缓存", isOn: $cacheEnabled)
+                    Picker("缓存上限", selection: $cacheLimitMB) {
+                        ForEach(ImageCache.limitOptions, id: \.self) { mb in
+                            Text(ImageCache.limitLabel(mb)).tag(mb)
+                        }
+                    }
+                    .disabled(!cacheEnabled)
+                    LabeledContent("当前占用") {
+                        Text(cacheEnabled
+                             ? "\(NetLog.byteText(Int(cache.diskBytes))) · \(cache.diskCount) 张"
+                             : "已关闭")
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(role: .destructive) {
+                        cache.clear()
+                    } label: {
+                        Label("清空图片缓存", systemImage: "trash")
+                    }
+                    .disabled(!cacheEnabled || (cache.diskCount == 0 && cache.diskBytes == 0))
+                } header: {
+                    Text("图片缓存")
+                } footer: {
+                    Text("缓存已加载的封面与头像，滚动列表不重复下载；智能裁剪结果一并缓存，不再重复计算。超出上限时按「最久未使用」自动淘汰。关闭后不再读写缓存（已占空间不会自动释放，可手动清空）。")
+                }
+
+                Section {
                     Button(role: .destructive) {
                         serverSetupDone = false
                     } label: {
@@ -345,12 +374,19 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    LabeledContent("版本", value: "1.5.15")
+                    LabeledContent("版本", value: "1.5.16")
                     LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
                 }
             }
             .navigationTitle("设置")
             .errorAlert($error)
+            .onAppear { cache.refreshUsage() }
+            .onChange(of: cacheLimitMB) { _ in
+                cache.trimNow()   // 改小上限后立刻淘汰
+            }
+            .onChange(of: cacheEnabled) { on in
+                if on { cache.refreshUsage() }
+            }
             .sheet(isPresented: $showAdd) {
                 AddProfileSheet { settings.addProfile($0) }
             }
