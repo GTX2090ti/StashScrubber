@@ -48,7 +48,8 @@ struct PerformersView: View {
                 .searchable(text: $vm.query, prompt: "搜索演员名称")
                 .onSubmit(of: .search) { Task { await vm.reload() } }
                 .refreshable { await vm.reload() }
-                .task(id: settings.activeProfileID) { await vm.reload() }
+                // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
+                .task(id: settings.reloadKey) { await vm.reload() }
                 .errorAlert($vm.error)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }

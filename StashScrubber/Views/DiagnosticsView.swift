@@ -2,12 +2,20 @@ import SwiftUI
 
 // MARK: - 网络诊断：一键定位「转圈 / 连不上」问题的真实链路状态
 // 检测项：
-//  1. 所有档案的 GraphQL 可达性（并发探测，报告延迟 / HTTP 状态 / Stash 版本或错误）
-//  2. 当前档案的图片链路（取一张短片截图，报告 HTTP 状态 / 字节数 / Content-Type）
+//  1. 所有连接的可用地址（内网 / 外网）GraphQL 可达性（并发探测，报告延迟 / HTTP 状态 / Stash 版本或错误）
+//  2. 当前生效地址的图片链路（取一张短片截图，报告 HTTP 状态 / 字节数 / Content-Type）
 //  3. 系统代理对比：同请求绕过系统代理直连，区分「代理吊死」与「本地网络权限」
-//  4. WiFi 自动切换的最近状态（SSID / 动作）
+//  4. 地址选路状态（当前生效地址 / 是否被 WiFi 规则锁定 / 最近一次选路结论）
 // 探测实现统一来自 NetProbe（NetworkCore.swift），每个探测外挂硬超时：
 // 到点强制取消任务，诊断页绝不整体吊死。所有结果同时写入网络日志。
+
+// 探测目标：放文件作用域（非 @MainActor 隔离），供 TaskGroup 并发使用
+private struct Target: Sendable {
+    let title: String
+    let url: String
+    let apiKey: String
+    let isLAN: Bool
+}
 
 struct DiagnosticsView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -26,13 +34,45 @@ struct DiagnosticsView: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("当前档案", value: settings.activeProfile?.name ?? "无")
-                LabeledContent("地址", value: settings.activeProfile?.url ?? "-")
-                LabeledContent("API Key", value: (settings.activeProfile?.apiKey.isEmpty ?? true) ? "未设置" : "已设置")
+                if let c = settings.activeConnection {
+                    LabeledContent("连接", value: c.name)
+                    LabeledContent("地址类型", value: c.kind.label)
+                    LabeledContent("当前生效") {
+                        Text("\(settings.activeSlot.label) · \(settings.activeAddress)")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    LabeledContent("内网地址", value: c.displayURL(for: .lan) ?? "未配置")
+                    LabeledContent("外网地址", value: c.displayURL(for: .wan) ?? "未配置")
+                    LabeledContent("API Key", value: c.hasAPIKey ? "已设置" : "未设置")
+                } else {
+                    Text("未配置连接").foregroundStyle(.secondary)
+                }
             } header: {
-                Text("当前档案")
+                Text("当前连接")
             } footer: {
-                Text("逐项检测所有档案的 GraphQL 可达性、图片链路与系统代理干扰；检测结果同时记录到网络日志，可一键复制反馈。")
+                Text("逐项检测每条连接的可用地址（内网 / 外网）与当前生效地址的图片链路；检测结果同时记录到网络日志，可一键复制反馈。")
+            }
+
+            Section {
+                LabeledContent("选路方式", value: settings.isSlotPinned
+                               ? "已锁定「\(settings.activeSlot.label)地址」"
+                               : "自动（优先内网，不可达切外网）")
+                if let r = settings.lastSwitchReason {
+                    Text(r)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if settings.isSlotPinned {
+                    Button("恢复自动选择") { settings.clearPin() }
+                }
+                Button("立即重新选路（测速）") {
+                    Task { await settings.autoSelectSlot(force: true) }
+                }
+            } header: {
+                Text("地址选路")
+            } footer: {
+                Text("「优先使用内网地址」在启动 / 回到前台时实测内网地址，不可达则自动切到外网；被 WiFi 规则锁定后不再自动兜底。")
             }
 
             Section("检测结果") {
@@ -66,12 +106,12 @@ struct DiagnosticsView: View {
             }
 
             Section {
-                LabeledContent("自动切换", value: WiFiAutoSwitch.shared.enabled ? "开启" : "关闭")
+                LabeledContent("规则开关", value: WiFiAutoSwitch.shared.enabled ? "开启" : "关闭")
                 LabeledContent("规则数", value: "\(WiFiAutoSwitch.shared.rules.count)")
                 LabeledContent("最近检测 SSID", value: WiFiAutoSwitch.shared.lastSSID ?? "无")
                 LabeledContent("最近动作", value: WiFiAutoSwitch.shared.lastAction ?? "无")
             } header: {
-                Text("WiFi 自动切换状态")
+                Text("WiFi 规则状态")
             }
 
             Section {
@@ -85,9 +125,7 @@ struct DiagnosticsView: View {
                 }
                 .disabled(running)
 
-                NavigationLink {
-                    NetLogView()
-                } label: {
+                NavigationLink(value: SettingsRoute.netLog) {
                     Label("查看网络日志（可复制）", systemImage: "doc.text.magnifyingglass")
                 }
             }
@@ -105,23 +143,33 @@ struct DiagnosticsView: View {
         rows = []
         defer { running = false }
 
+        // 快照所有连接的可用地址
+        var targets: [Target] = []
+        for c in settings.connections {
+            for slot in c.availableSlots {
+                guard let u = c.url(for: slot) else { continue }
+                targets.append(Target(title: "\(c.name) · \(slot.label)", url: u,
+                                      apiKey: c.apiKey, isLAN: slot == .lan))
+            }
+        }
+        let activeProfile = settings.activeProfile
+
         let results = await withTaskGroup(of: [Row].self, returning: [Row].self) { group in
-            for p in settings.profiles {
+            for t in targets {
                 group.addTask {
-                    let isLAN = StashEndpoint.isLAN(p.url)
-                    let r = await Self.probeGraphQL(p)
-                    var row = Self.row(for: r, title: "GraphQL · \(p.name)", isLAN: isLAN)
-                    // 系统代理对比：仅对失败档案做绕过代理的直连复测
+                    let r = await Self.probeGraphQL(t)
+                    var row = Self.row(for: r, title: "GraphQL · \(t.title)", isLAN: t.isLAN)
+                    // 系统代理对比：仅对失败地址做绕过代理的直连复测
                     if r.error != nil {
-                        let d = await Self.probeGraphQL(p, direct: true)
-                        row = Self.withDirectCompare(primary: row, direct: d, isLAN: isLAN)
+                        let d = await Self.probeGraphQL(t, direct: true)
+                        row = Self.withDirectCompare(primary: row, direct: d, isLAN: t.isLAN)
                     }
                     return [row]
                 }
             }
 
-            // 当前档案图片链路 + 直连对比
-            if let p = settings.activeProfile {
+            // 当前生效地址的图片链路 + 直连对比
+            if let p = activeProfile {
                 group.addTask { await Self.imageProbe(profile: p) }
             }
 
@@ -134,12 +182,12 @@ struct DiagnosticsView: View {
 
     // MARK: 探测（统一走 NetProbe）
 
-    private static func probeGraphQL(_ p: ServerProfile, direct: Bool = false) async -> NetProbe.Result {
-        let title = "GraphQL 探测 · \(p.name)" + (direct ? "（直连对比）" : "")
+    private static func probeGraphQL(_ t: Target, direct: Bool = false) async -> NetProbe.Result {
+        let title = "GraphQL 探测 · \(t.title)" + (direct ? "（直连对比）" : "")
         let session = direct ? NetTransport.direct : NetTransport.api
         return await NetProbe.hardTimeout(8, category: .diag, title: title,
-                                          url: StashEndpoint.graphqlURL(p.url)?.absoluteString) {
-            await NetProbe.graphql(base: p.url, apiKey: p.apiKey,
+                                          url: StashEndpoint.graphqlURL(t.url)?.absoluteString) {
+            await NetProbe.graphql(base: t.url, apiKey: t.apiKey,
                                    query: "{ version { version } }", timeout: 6,
                                    session: session, category: .diag, title: title)
         }
@@ -196,7 +244,7 @@ struct DiagnosticsView: View {
         if let err = r.error {
             var detail = "失败：\(err)（\(String(format: "%.1f", r.latency))s）"
             if isLAN {
-                detail += "\n提示：内网地址——若长时间无响应，检查 设置→隐私与安全性→本地网络 是否允许本 App；或该 Wi-Fi 下内网不可达"
+                detail += "\n提示：内网地址——若长时间无响应，检查 设置→隐私与安全性→本地网络 是否允许本 App；或该 Wi-Fi 下内网不可达（App 会自动改走外网）"
             }
             return Row(title: title, detail: detail, state: .fail)
         }

@@ -14,8 +14,11 @@ struct StashScrubberApp: App {
                 .environmentObject(WiFiAutoSwitch.shared)
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
-                        // 回到前台时按 WiFi 规则自动切换内外网档案
-                        Task { await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared) }
+                        Task {
+                            // 回到前台：先按 WiFi 规则（如有）锁定/切换，再做一次内网优先选路
+                            await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
+                            await AppSettings.shared.autoSelectSlot()
+                        }
                     }
                 }
         }
@@ -35,12 +38,15 @@ struct RootGate: View {
     }
 }
 
-// MARK: - 服务器档案（内网 / 外网多套配置，可一键切换）
+// MARK: - 运行时服务器档案（由 ServerConnection + 生效地址槽位解析而来）
+//
+// 保留此结构体是为了让 GraphQLClient / 探测 / 延迟监测 / WiFi 切换的调用点
+// 不必关心「一条连接两个地址」的细节——它们只需要一个可用基址 + 一个名称。
 
 struct ServerProfile: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
-    var name: String          // 如 "内网 NAS" / "外网域名"
-    var url: String           // 如 http://192.168.2.210:9999 或 https://stash.example.com/stash
+    var name: String          // 连接名（可带「· 内网 / · 外网」后缀）
+    var url: String           // 已解析出的基址，如 http://192.168.2.210:9999
     var apiKey: String        // Stash 设置 → 安全 → API Key，可留空
 }
 
@@ -51,14 +57,19 @@ enum AppSection: Hashable {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.horizontalSizeClass) private var hSize
 
     var body: some View {
-        if hSize == .compact {
-            TabRootView()
-        } else {
-            SplitRootView()
+        Group {
+            if hSize == .compact {
+                TabRootView()
+            } else {
+                SplitRootView()
+            }
         }
+        // 启动后按「地址类型 + 优先内网」做一次选路（内网 60 秒内有缓存则直接复用）
+        .task { await settings.autoSelectSlot() }
     }
 }
 
@@ -110,114 +121,438 @@ struct SplitRootView: View {
     }
 }
 
-// MARK: - 服务器配置（UserDefaults 持久化，支持多档案切换内外网）
+// MARK: - 连接与选路（UserDefaults 持久化）
+//
+// 模型说明见 Models/ServerConnection.swift：
+//   一条 ServerConnection = 一个服务 + 内网地址 + 外网地址 + 地址类型 + 「优先使用内网地址」。
+// 生效地址由 activeSlot 决定，autoSelectSlot() 负责「优先内网、内网不可达则自动切外网」。
+// 旧版「每个地址一条独立档案」的持久化数据会在首次启动时自动迁移为一条双地址连接。
 
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    private static let profilesKey = "stash.profiles"
-    private static let activeKey = "stash.activeProfileID"
+    private static let connKey = "stash.connections"
+    private static let activeConnKey = "stash.activeConnectionID"
+    private static let pinnedSlotKey = "stash.pinnedSlot"
+    // 旧版键：迁移后保留不删，便于回退旧版本 App
+    private static let legacyProfilesKey = "stash.profiles"
+    private static let legacyActiveKey = "stash.activeProfileID"
 
-    @Published var profiles: [ServerProfile] {
-        didSet { persist() }
+    @Published var connections: [ServerConnection] {
+        didSet { persistConnections() }
     }
-    @Published var activeProfileID: UUID? {
-        didSet { persist() }
+    @Published var activeConnectionID: UUID? {
+        didSet { persistActive() }
     }
+    /// 当前生效的地址槽位（内网 / 外网）
+    @Published private(set) var activeSlot: AddressSlot = .lan
+    /// 被 WiFi 规则或手动锁定的槽位；nil 表示按「优先使用内网地址」自动决定
+    @Published private(set) var pinnedSlot: AddressSlot? {
+        didSet {
+            UserDefaults.standard.set(pinnedSlot?.rawValue, forKey: Self.pinnedSlotKey)
+        }
+    }
+    /// 最近一次选路结论（设置页 / 诊断页展示）
+    @Published private(set) var lastSwitchReason: String?
 
     private init() {
         let d = UserDefaults.standard
-        if let data = d.data(forKey: Self.profilesKey),
-           let saved = try? JSONDecoder().decode([ServerProfile].self, from: data), !saved.isEmpty {
-            profiles = saved
+        var list: [ServerConnection] = []
+        var restoredActive: UUID?
+        var restoredPin: AddressSlot?
+
+        if let data = d.data(forKey: Self.connKey),
+           let saved = try? JSONDecoder().decode([ServerConnection].self, from: data), !saved.isEmpty {
+            list = saved
+            if let s = d.string(forKey: Self.activeConnKey) { restoredActive = UUID(uuidString: s) }
+        } else if let data = d.data(forKey: Self.legacyProfilesKey),
+                  let old = try? JSONDecoder().decode([ServerProfile].self, from: data), !old.isEmpty {
+            // 旧版扁平档案 → 一条双地址连接（原有内外网两条自动合并）
+            let m = Self.migrate(old, legacyActiveID: d.string(forKey: Self.legacyActiveKey).flatMap(UUID.init(uuidString:)))
+            list = m.connections
+            restoredActive = m.activeID
+            restoredPin = m.pinnedSlot
         } else {
-            // 首次启动的默认档案：内网直连 + 外网示例
-            profiles = [
-                ServerProfile(name: "内网 NAS", url: "http://192.168.2.210:9999", apiKey: ""),
-                ServerProfile(name: "外网", url: "https://stash.example.com", apiKey: "")
-            ]
+            list = [Self.freshDefault()]
         }
-        activeProfileID = d.object(forKey: Self.activeKey) as? UUID ?? profiles.first?.id
+
+        if let s = d.string(forKey: Self.pinnedSlotKey), let p = AddressSlot(rawValue: s) { restoredPin = p }
+
+        connections = list
+        activeConnectionID = restoredActive ?? list.first?.id
+        pinnedSlot = restoredPin
+        let active = list.first { $0.id == activeConnectionID } ?? list.first
+        activeSlot = restoredPin ?? (active?.preferredSlot ?? .lan)
+
+        // 初始化阶段属性观察器不触发，这里显式落盘（迁移后立刻写入新格式）
+        persistConnections()
+        persistActive()
+        UserDefaults.standard.set(pinnedSlot?.rawValue, forKey: Self.pinnedSlotKey)
     }
 
-    private func persist() {
-        let d = UserDefaults.standard
-        if let data = try? JSONEncoder().encode(profiles) {
-            d.set(data, forKey: Self.profilesKey)
-        }
-        d.set(activeProfileID?.uuidString, forKey: Self.activeKey)
+    // MARK: 默认值 / 迁移
+
+    private static func freshDefault() -> ServerConnection {
+        ServerConnection(name: "Stash 服务器", kind: .both,
+                         lanHost: "192.168.2.210", lanPort: "9999", lanHTTPS: false,
+                         wanHost: "", wanPort: "", wanHTTPS: true,
+                         preferLAN: true, apiKey: "")
     }
 
+    private struct Migration {
+        var connections: [ServerConnection]
+        var activeID: UUID?
+        var pinnedSlot: AddressSlot?
+    }
+
+    private static func migrate(_ old: [ServerProfile], legacyActiveID: UUID?) -> Migration {
+        let lan = old.first { StashEndpoint.isLAN($0.url) }
+        let wan = old.first { !StashEndpoint.isLAN($0.url) }
+        var out: [ServerConnection] = []
+        var activeID: UUID?
+        var pin: AddressSlot?
+
+        if let lan, let wan {
+            let l = ServerConnection.split(lan.url)
+            let w = ServerConnection.split(wan.url)
+            let c = ServerConnection(name: "Stash 服务器", kind: .both,
+                                     lanHost: l.host, lanPort: l.port, lanHTTPS: l.https,
+                                     wanHost: w.host, wanPort: w.port, wanHTTPS: w.https,
+                                     preferLAN: true,
+                                     apiKey: lan.apiKey.isEmpty ? wan.apiKey : lan.apiKey)
+            out.append(c)
+            activeID = c.id
+            // 旧版激活的是外网档案 → 保留「不优先内网」的意图
+            if legacyActiveID == wan.id { pin = .wan }
+        }
+
+        for p in old where p.id != lan?.id && p.id != wan?.id {
+            let s = ServerConnection.split(p.url)
+            let isLAN = StashEndpoint.isLAN(p.url)
+            let c = ServerConnection(name: p.name, kind: isLAN ? .lan : .wan,
+                                     lanHost: isLAN ? s.host : "",
+                                     lanPort: isLAN ? s.port : "",
+                                     lanHTTPS: isLAN && s.https,
+                                     wanHost: isLAN ? "" : s.host,
+                                     wanPort: isLAN ? "" : s.port,
+                                     wanHTTPS: !isLAN && s.https,
+                                     apiKey: p.apiKey)
+            out.append(c)
+            if legacyActiveID == p.id { activeID = c.id }
+        }
+
+        if activeID == nil { activeID = out.first?.id }
+        return Migration(connections: out, activeID: activeID, pinnedSlot: pin)
+    }
+
+    // MARK: 持久化
+
+    private func persistConnections() {
+        if let data = try? JSONEncoder().encode(connections) {
+            UserDefaults.standard.set(data, forKey: Self.connKey)
+        }
+    }
+
+    private func persistActive() {
+        UserDefaults.standard.set(activeConnectionID?.uuidString, forKey: Self.activeConnKey)
+    }
+
+    // MARK: 读取
+
+    var activeConnection: ServerConnection? {
+        connections.first { $0.id == activeConnectionID } ?? connections.first
+    }
+
+    /// 当前生效的地址（未配置时为 空串）
+    var activeAddress: String {
+        guard let c = activeConnection else { return "" }
+        return c.url(for: activeSlot) ?? c.canonicalProfile?.url ?? ""
+    }
+
+    // 兼容旧调用点的只读别名
+    var serverURL: String { activeAddress }
+    var apiKey: String { activeConnection?.apiKey ?? "" }
+    var activeProfileID: UUID? { activeConnectionID }
+
+    /// 每个连接按其「优先地址」暴露一条运行时档案（兼容旧接口）
+    var profiles: [ServerProfile] { connections.compactMap { $0.canonicalProfile } }
+
+    /// 按生效地址解析出的运行时档案
     var activeProfile: ServerProfile? {
-        profiles.first { $0.id == activeProfileID } ?? profiles.first
+        guard let c = activeConnection else { return nil }
+        return c.resolvedProfile(slot: activeSlot) ?? c.canonicalProfile
     }
 
-    var serverURL: String { activeProfile?.url ?? "" }
-    var apiKey: String { activeProfile?.apiKey ?? "" }
+    /// 视图刷新键：连接或生效地址变化都应重新拉数据
+    var reloadKey: String {
+        "\(activeConnectionID?.uuidString ?? "-")|\(activeAddress)"
+    }
+
+    /// 当前是否由 WiFi 规则 / 手动锁定地址
+    var isSlotPinned: Bool { pinnedSlot != nil }
 
     func makeClient() throws -> GraphQLClient {
-        guard let p = activeProfile, !p.url.isEmpty else {
+        guard let c = activeConnection else {
             throw StashAPIError.badURL("请先在设置中配置 Stash 服务器地址")
         }
-        return try GraphQLClient(baseURL: p.url, apiKey: p.apiKey, profileName: p.name)
+        guard let url = c.url(for: activeSlot) ?? c.canonicalProfile?.url, !url.isEmpty else {
+            throw StashAPIError.badURL("「\(c.name)」未配置可用地址，请在 设置 → 服务器连接 中填写内网或外网地址")
+        }
+        return try GraphQLClient(baseURL: url, apiKey: c.apiKey, profileName: c.name)
     }
 
-    func updateActive(name: String? = nil, url: String? = nil, apiKey: String? = nil) {
-        guard let idx = profiles.firstIndex(where: { $0.id == activeProfileID }) ?? profiles.indices.first else { return }
-        if let name { profiles[idx].name = name }
-        if let url { profiles[idx].url = url }
-        if let apiKey { profiles[idx].apiKey = apiKey }
+    func connection(_ id: UUID) -> ServerConnection? {
+        connections.first { $0.id == id }
     }
 
-    /// 首次登录初始化：用登录页填写的内外网地址重建档案（内网默认激活，API Key 两档案通用）
+    // MARK: 写入
+
+    func mutate(_ id: UUID, _ change: (inout ServerConnection) -> Void) {
+        guard let i = connections.firstIndex(where: { $0.id == id }) else { return }
+        change(&connections[i])
+    }
+
+    func upsert(_ c: ServerConnection) {
+        if let i = connections.firstIndex(where: { $0.id == c.id }) {
+            connections[i] = c
+        } else {
+            connections.append(c)
+        }
+    }
+
+    func addConnection(_ c: ServerConnection) {
+        connections.append(c)
+        activeConnectionID = c.id
+        pinnedSlot = nil
+        activeSlot = c.preferredSlot ?? .lan
+        Task { await autoSelectSlot(force: true) }
+    }
+
+    func deleteConnection(_ c: ServerConnection) {
+        connections.removeAll { $0.id == c.id }
+        if activeConnectionID == c.id {
+            activeConnectionID = connections.first?.id
+            activeSlot = activeConnection?.preferredSlot ?? .lan
+            pinnedSlot = nil
+        }
+    }
+
+    func switchToConnection(_ id: UUID) {
+        guard connections.contains(where: { $0.id == id }) else { return }
+        activeConnectionID = id
+        pinnedSlot = nil
+        activeSlot = activeConnection?.preferredSlot ?? .lan
+        Task { await autoSelectSlot(force: true) }
+    }
+
+    /// 兼容旧调用：按运行时档案切换连接
+    func switchTo(_ p: ServerProfile) { switchToConnection(p.id) }
+
+    /// 手动锁定到某一侧地址（工具栏菜单 / WiFi 规则）
+    func pin(_ slot: AddressSlot) {
+        guard let c = activeConnection, c.availableSlots.contains(slot) else { return }
+        pinnedSlot = slot
+        activeSlot = slot
+        lastSwitchReason = "已手动指定使用\(slot.label)地址"
+        NetLog.shared.record(category: .diag, level: .info, title: "地址切换",
+                             message: lastSwitchReason)
+    }
+
+    /// 取消锁定，回到「优先内网、自动兜底」
+    func clearPin() {
+        pinnedSlot = nil
+        Task { await autoSelectSlot(force: true) }
+    }
+
+    /// 记录一次成功同步（列表页成功拉到数据时调用）
+    func markSynced() {
+        guard let i = connections.firstIndex(where: { $0.id == activeConnectionID }) else { return }
+        if let t = connections[i].lastSync, Date().timeIntervalSince(t) < 60 { return }
+        connections[i].lastSync = Date()
+    }
+
+    /// 首次登录初始化：用登录页填写的内外网地址建立一条连接
     func applyFirstSetup(lanURL: String, wanURL: String, apiKey: String) {
-        let lan = ServerProfile(name: "内网", url: lanURL, apiKey: apiKey)
-        let wan = ServerProfile(name: "外网", url: wanURL, apiKey: apiKey)
-        profiles = [lan, wan]
-        activeProfileID = lan.id
+        let lan = lanURL.trimmingCharacters(in: .whitespaces)
+        let wan = wanURL.trimmingCharacters(in: .whitespaces)
+        let l = ServerConnection.split(lan)
+        let w = ServerConnection.split(wan)
+
+        var c = ServerConnection(name: "Stash 服务器", apiKey: apiKey)
+        c.lanHost = l.host; c.lanPort = l.port; c.lanHTTPS = l.https
+        c.wanHost = w.host; c.wanPort = w.port; c.wanHTTPS = w.https
+
+        if lan.isEmpty {
+            c.kind = .wan
+        } else if wan.isEmpty {
+            c.kind = .lan
+        } else {
+            c.kind = .both
+        }
+        c.preferLAN = (c.kind != .wan)
+
+        connections = [c]
+        activeConnectionID = c.id
+        pinnedSlot = nil
+        activeSlot = c.preferredSlot ?? .lan
     }
 
-    func addProfile(_ p: ServerProfile) {
-        profiles.append(p)
-        activeProfileID = p.id
+    // MARK: 选路（优先内网，不可达自动切外网）
+
+    /// 依据「地址类型 + 锁定槽位 + 优先内网」，实测优先地址可达性后确定生效地址。
+    /// 优先地址不可达且未被锁定 → 自动兜底到另一侧。结果写入网络日志。
+    func autoSelectSlot(force: Bool = false) async {
+        guard let c = activeConnection else { return }
+        let slots = c.availableSlots
+        guard !slots.isEmpty else {
+            activeSlot = .lan
+            lastSwitchReason = "「\(c.name)」未配置可用地址"
+            return
+        }
+
+        // 锁定的一侧已被删除 / 地址类型已排除 → 自动解除锁定
+        if let pin = pinnedSlot, !slots.contains(pin) { pinnedSlot = nil }
+
+        // 1) 期望槽位：单侧配置 > WiFi 规则锁定 > 优先内网
+        let target: AddressSlot
+        if slots.count == 1 {
+            target = slots[0]
+        } else if let pin = pinnedSlot, slots.contains(pin) {
+            target = pin
+        } else {
+            target = c.preferredSlot ?? slots[0]
+        }
+
+        // 2) 实测优先地址
+        let first = await LatencyMonitor.shared.measure(url: c.url(for: target) ?? "",
+                                                        apiKey: c.apiKey,
+                                                        name: "\(c.name) · \(target.label)",
+                                                        force: force)
+        if first.isReachable {
+            apply(slot: target, reason: "使用\(target.label)地址（\(first.text)）")
+            markSynced()
+            return
+        }
+
+        // 另一个测速正在进行（工具栏菜单 / 设置页并发触发）→ 结果未知，不做兜底误判
+        if first.isProbing {
+            apply(slot: target, reason: "测速进行中，暂用\(target.label)地址")
+            return
+        }
+
+        // 3) 自动兜底：仅当未被锁定且确实配置了另一侧
+        if pinnedSlot == nil, let fb = c.fallbackSlot {
+            let second = await LatencyMonitor.shared.measure(url: c.url(for: fb) ?? "",
+                                                             apiKey: c.apiKey,
+                                                             name: "\(c.name) · \(fb.label)",
+                                                             force: force)
+            if second.isReachable {
+                apply(slot: fb, reason: "\(target.label)地址不可达（\(first.detail ?? first.text)），已自动切到\(fb.label)")
+                markSynced()
+                return
+            }
+            if second.isProbing {
+                apply(slot: target, reason: "另一侧测速进行中，暂用\(target.label)地址")
+                return
+            }
+            apply(slot: target, reason: "内网与外网地址均不可达，请检查网络或地址配置")
+            return
+        }
+
+        apply(slot: target, reason: "\(target.label)地址不可达（\(first.detail ?? first.text)）")
     }
 
-    func deleteProfile(_ p: ServerProfile) {
-        profiles.removeAll { $0.id == p.id }
-        if activeProfileID == p.id { activeProfileID = profiles.first?.id }
-    }
-
-    func switchTo(_ p: ServerProfile) {
-        activeProfileID = p.id
+    private func apply(slot: AddressSlot, reason: String) {
+        let changed = activeSlot != slot
+        activeSlot = slot
+        lastSwitchReason = reason
+        if changed {
+            NetLog.shared.record(category: .diag, level: .info, title: "地址切换", message: reason)
+        }
     }
 }
 
 // MARK: - 服务器快速切换菜单（各列表页工具栏共用）
+//
+// 菜单列出「连接 × 可用地址」，点选即锁定到该地址（例：在家想强制走外网、或出门锁外网）；
+// 顶部提供「恢复自动选择」，回到「优先内网、内网不可达自动切外网」。
 
 struct ServerSwitcherMenu: View {
     @EnvironmentObject private var settings: AppSettings
+    @ObservedObject private var latency = LatencyMonitor.shared
 
     var body: some View {
         Menu {
-            ForEach(settings.profiles) { p in
+            if settings.isSlotPinned {
                 Button {
-                    settings.switchTo(p)
+                    settings.clearPin()
                 } label: {
-                    if p.id == settings.activeProfile?.id {
-                        Label(p.name, systemImage: "checkmark")
-                    } else {
-                        Text(p.name)
+                    Label("恢复自动选择（优先内网）", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Divider()
+            }
+            ForEach(settings.connections) { c in
+                Section(c.name) {
+                    ForEach(c.availableSlots, id: \.self) { slot in
+                        Button {
+                            if settings.activeConnection?.id != c.id {
+                                settings.switchToConnection(c.id)
+                            }
+                            settings.pin(slot)
+                        } label: {
+                            itemLabel(connection: c, slot: slot)
+                        }
                     }
                 }
             }
+            Divider()
+            Button {
+                latency.probeConnections(settings.connections, force: true)
+                Task { await settings.autoSelectSlot(force: true) }
+            } label: {
+                Label("重新测速并选路", systemImage: "arrow.clockwise")
+            }
         } label: {
-            Label(
-                settings.activeProfile?.name ?? "未配置",
-                systemImage: "server.rack"
-            )
+            Label(menuTitle, systemImage: "server.rack")
+        }
+        .task { latency.probeConnections(settings.connections) }
+    }
+
+    /// 菜单项：连接名 · 内网/外网 + 延迟；当前生效项带勾选，不可达带警示图标
+    @ViewBuilder
+    private func itemLabel(connection c: ServerConnection, slot: AddressSlot) -> some View {
+        let st = latency.state(for: c.url(for: slot) ?? "")
+        let isCurrent = settings.activeConnection?.id == c.id && settings.activeSlot == slot
+        let title = "\(slot.label) · \(c.displayURL(for: slot) ?? "-") · \(st.text)"
+        if isCurrent {
+            Label(title, systemImage: "checkmark")
+        } else if case .failed = st {
+            Label(title, systemImage: "exclamationmark.triangle")
+        } else {
+            Text(title)
         }
     }
+
+    /// 工具栏标题：连接名 · 生效地址侧 + 延迟
+    private var menuTitle: String {
+        guard let c = settings.activeConnection else { return "未配置" }
+        let st = latency.state(for: settings.activeAddress)
+        switch st {
+        case .idle, .probing: return "\(c.name) · \(settings.activeSlot.label)"
+        default: return "\(c.name) · \(settings.activeSlot.label) · \(st.text)"
+        }
+    }
+}
+
+// MARK: - 设置页导航路由（value 型链接统一在栈根注册，避免嵌套 isPresented 造成闪跳）
+
+enum SettingsRoute: Hashable {
+    case connectionDetail(UUID)
+    case connectionConfig(UUID)
+    case wifiRules
+    case diagnostics
+    case netLog
 }
 
 // MARK: - 设置页
@@ -228,158 +563,20 @@ struct SettingsView: View {
     @AppStorage(ImageCache.enabledKey) private var cacheEnabled = true
     @AppStorage(ImageCache.limitMBKey) private var cacheLimitMB = ImageCache.defaultLimitMB
     @ObservedObject private var cache = ImageCache.shared
-    @State private var testing = false
-    @State private var testResult: String?
-    @State private var error: String?
+    @ObservedObject private var latency = LatencyMonitor.shared
     @State private var showAdd = false
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    ForEach(settings.profiles) { p in
-                        Button {
-                            settings.switchTo(p)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(p.name).font(.body).foregroundStyle(.primary)
-                                    Text(p.url)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                if p.id == settings.activeProfile?.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                            }
-                        }
-                        .swipeActions {
-                            Button(role: .destructive) {
-                                settings.deleteProfile(p)
-                            } label: {
-                                Label("删除", systemImage: "trash")
-                            }
-                        }
-                    }
-                    Button {
-                        showAdd = true
-                    } label: {
-                        Label("添加服务器档案", systemImage: "plus")
-                    }
-                } header: {
-                    Text("服务器档案（内网 / 外网）")
-                } footer: {
-                    Text("切换后所有列表与削刮操作立即指向所选档案。外网访问建议使用 HTTPS 反向代理（如 Nginx/Caddy），或经 WireGuard/Tailscale 回家后使用内网地址。")
-                }
-
-                Section {
-                    TextField("档案名称", text: Binding(
-                        get: { settings.activeProfile?.name ?? "" },
-                        set: { settings.updateActive(name: $0) }))
-                    TextField("服务地址（http:// 或 https://，可含路径前缀）", text: Binding(
-                        get: { settings.activeProfile?.url ?? "" },
-                        set: { settings.updateActive(url: $0) }))
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("API Key（可留空）", text: Binding(
-                        get: { settings.activeProfile?.apiKey ?? "" },
-                        set: { settings.updateActive(apiKey: $0) }))
-                } header: {
-                    Text("当前档案：\(settings.activeProfile?.name ?? "无")")
-                } footer: {
-                    Text("GraphQL 端点会自动追加 /graphql。削刮功能要求 Stash 服务端已配置对应刮削器；若服务端启用了 API Key，请务必填写。")
-                }
-
-                Section {
-                    Button {
-                        Task { await testConnection() }
-                    } label: {
-                        HStack {
-                            if testing { ProgressView().padding(.trailing, 6) }
-                            Text("测试连接")
-                        }
-                    }
-                    .disabled(testing || (settings.activeProfile?.url.isEmpty ?? true))
-                    if let testResult {
-                        Label(testResult, systemImage: testResult.contains("成功") ? "checkmark.circle" : "xmark.circle")
-                            .font(.subheadline)
-                            .foregroundStyle(testResult.contains("成功") ? Color.green : Color.red)
-                    }
-                } header: {
-                    Text("连接")
-                }
-
-                Section {
-                    NavigationLink {
-                        WiFiRulesView()
-                    } label: {
-                        Label("WiFi 自动切换", systemImage: "wifi")
-                    }
-                    NavigationLink {
-                        DiagnosticsView()
-                    } label: {
-                        Label("网络诊断", systemImage: "stethoscope")
-                    }
-                    NavigationLink {
-                        NetLogView()
-                    } label: {
-                        Label("网络日志（可复制）", systemImage: "doc.text.magnifyingglass")
-                    }
-                } header: {
-                    Text("网络")
-                } footer: {
-                    Text("按 WiFi 名称（SSID）自动在内网/外网档案间切换，规则支持增删改；回到前台时自动检测。网络日志记录每次请求的结果，可一键复制用于排障。")
-                }
-
-                Section {
-                    Toggle("启用图片缓存", isOn: $cacheEnabled)
-                    Picker("缓存上限", selection: $cacheLimitMB) {
-                        ForEach(ImageCache.limitOptions, id: \.self) { mb in
-                            Text(ImageCache.limitLabel(mb)).tag(mb)
-                        }
-                    }
-                    .disabled(!cacheEnabled)
-                    LabeledContent("当前占用") {
-                        Text(cacheEnabled
-                             ? "\(NetLog.byteText(Int(cache.diskBytes))) · \(cache.diskCount) 张"
-                             : "已关闭")
-                            .foregroundStyle(.secondary)
-                    }
-                    Button(role: .destructive) {
-                        cache.clear()
-                    } label: {
-                        Label("清空图片缓存", systemImage: "trash")
-                    }
-                    .disabled(!cacheEnabled || (cache.diskCount == 0 && cache.diskBytes == 0))
-                } header: {
-                    Text("图片缓存")
-                } footer: {
-                    Text("缓存已加载的封面与头像，滚动列表不重复下载；智能裁剪结果一并缓存，不再重复计算。超出上限时按「最久未使用」自动淘汰。关闭后不再读写缓存（已占空间不会自动释放，可手动清空）。")
-                }
-
-                Section {
-                    Button(role: .destructive) {
-                        serverSetupDone = false
-                    } label: {
-                        Label("重置服务器配置（返回登录页）", systemImage: "arrow.counterclockwise")
-                    }
-                } header: {
-                    Text("账号")
-                } footer: {
-                    Text("返回登录页后需重新填写内外网地址与 API Key；登录会实测连接，密钥错误会被直接拦截。")
-                }
-
-                Section("说明") {
-                    LabeledContent("版本", value: "1.5.16")
-                    LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
-                }
+                connectionSection
+                networkSection
+                cacheSection
+                accountSection
+                aboutSection
             }
             .navigationTitle("设置")
-            .errorAlert($error)
+            .task { latency.probeConnections(settings.connections) }
             .onAppear { cache.refreshUsage() }
             .onChange(of: cacheLimitMB) { _ in
                 cache.trimNow()   // 改小上限后立刻淘汰
@@ -388,68 +585,138 @@ struct SettingsView: View {
                 if on { cache.refreshUsage() }
             }
             .sheet(isPresented: $showAdd) {
-                AddProfileSheet { settings.addProfile($0) }
+                AddConnectionSheet { settings.addConnection($0) }
             }
-        }
-    }
-
-    private func testConnection() async {
-        testing = true
-        testResult = nil
-        defer { testing = false }
-        do {
-            let client = try settings.makeClient()
-            let v = try await StashAPI.version(client)
-            testResult = "连接成功 · Stash \(v)"
-        } catch {
-            let msg = NetError.friendly(error)
-            self.error = msg
-            testResult = "连接失败：\(msg)"
-        }
-    }
-}
-
-struct AddProfileSheet: View {
-    var onAdd: (ServerProfile) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var url = "https://"
-    @State private var apiKey = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("档案名称（如 外网域名 / WireGuard）", text: $name)
-                TextField("服务地址", text: $url)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                SecureField("API Key（可留空）", text: $apiKey)
-            }
-            .navigationTitle("添加服务器")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+            // 路由统一注册在栈根：详情页 / 配置页内一律用 NavigationLink(value:)
+            .navigationDestination(for: SettingsRoute.self) { route in
+                switch route {
+                case .connectionDetail(let id): ConnectionDetailView(connectionID: id)
+                case .connectionConfig(let id): ConnectionConfigView(connectionID: id)
+                case .wifiRules: WiFiRulesView()
+                case .diagnostics: DiagnosticsView()
+                case .netLog: NetLogView()
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("添加") {
-                        onAdd(ServerProfile(
-                            name: name.isEmpty ? "服务器 \(settings_profileCountHint())" : name,
-                            url: url,
-                            apiKey: apiKey
-                        ))
-                        dismiss()
+            }
+        }
+    }
+
+    // MARK: 服务器连接
+
+    @ViewBuilder
+    private var connectionSection: some View {
+        Section {
+            ForEach(settings.connections) { c in
+                NavigationLink(value: SettingsRoute.connectionDetail(c.id)) {
+                    ConnectionRow(connection: c,
+                                  isActive: c.id == settings.activeConnection?.id,
+                                  activeSlot: settings.activeSlot,
+                                  latency: latency)
+                }
+                .swipeActions {
+                    Button(role: .destructive) {
+                        settings.deleteConnection(c)
+                    } label: {
+                        Label("删除", systemImage: "trash")
                     }
-                    .disabled(url.isEmpty)
                 }
             }
+            Button {
+                showAdd = true
+            } label: {
+                Label("添加连接", systemImage: "plus")
+            }
+            Button {
+                latency.probeConnections(settings.connections, force: true)
+                Task { await settings.autoSelectSlot(force: true) }
+            } label: {
+                Label("重新测速并选路", systemImage: "arrow.clockwise")
+            }
+        } header: {
+            Text("服务器连接")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                if let r = settings.lastSwitchReason {
+                    Text("当前：\(settings.activeSlot.label)地址 · \(r)")
+                }
+                Text("一条连接可同时配置内网与外网两个地址：开启「优先使用内网地址」后，App 在启动/回到前台时实测内网地址，不可达则自动切到外网；无需手动切换。地址类型可限定只用其中一侧。点击连接进入详情可查看地址、测试连接。")
+            }
         }
-        .presentationDetents([.medium])
     }
 
-    private func settings_profileCountHint() -> Int {
-        (UserDefaults.standard.data(forKey: "stash.profiles")
-            .flatMap { try? JSONDecoder().decode([ServerProfile].self, from: $0) }?.count ?? 0) + 1
+    // MARK: 网络
+
+    @ViewBuilder
+    private var networkSection: some View {
+        Section {
+            NavigationLink(value: SettingsRoute.wifiRules) {
+                Label("WiFi 自动切换", systemImage: "wifi")
+            }
+            NavigationLink(value: SettingsRoute.diagnostics) {
+                Label("网络诊断", systemImage: "stethoscope")
+            }
+            NavigationLink(value: SettingsRoute.netLog) {
+                Label("网络日志（可复制）", systemImage: "doc.text.magnifyingglass")
+            }
+        } header: {
+            Text("网络")
+        } footer: {
+            Text("按 WiFi 名称（SSID）可强制锁定内网/外网地址，规则支持增删改；回到前台时自动检测。网络日志记录每次请求的结果，可一键复制用于排障。")
+        }
+    }
+
+    // MARK: 图片缓存
+
+    @ViewBuilder
+    private var cacheSection: some View {
+        Section {
+            Toggle("启用图片缓存", isOn: $cacheEnabled)
+            Picker("缓存上限", selection: $cacheLimitMB) {
+                ForEach(ImageCache.limitOptions, id: \.self) { mb in
+                    Text(ImageCache.limitLabel(mb)).tag(mb)
+                }
+            }
+            .disabled(!cacheEnabled)
+            LabeledContent("当前占用") {
+                Text(cacheEnabled
+                     ? "\(NetLog.byteText(Int(cache.diskBytes))) · \(cache.diskCount) 张"
+                     : "已关闭")
+                    .foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) {
+                cache.clear()
+            } label: {
+                Label("清空图片缓存", systemImage: "trash")
+            }
+            .disabled(!cacheEnabled || (cache.diskCount == 0 && cache.diskBytes == 0))
+        } header: {
+            Text("图片缓存")
+        } footer: {
+            Text("缓存已加载的封面与头像，滚动列表不重复下载；智能裁剪结果一并缓存，不再重复计算。超出上限时按「最久未使用」自动淘汰。关闭后不再读写缓存（已占空间不会自动释放，可手动清空）。")
+        }
+    }
+
+    // MARK: 账号
+
+    @ViewBuilder
+    private var accountSection: some View {
+        Section {
+            Button(role: .destructive) {
+                serverSetupDone = false
+            } label: {
+                Label("重置服务器配置（返回登录页）", systemImage: "arrow.counterclockwise")
+            }
+        } header: {
+            Text("账号")
+        } footer: {
+            Text("返回登录页后需重新填写内外网地址与 API Key；登录会实测连接，密钥错误会被直接拦截。")
+        }
+    }
+
+    @ViewBuilder
+    private var aboutSection: some View {
+        Section("说明") {
+            LabeledContent("版本", value: "1.5.18")
+            LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
+        }
     }
 }
