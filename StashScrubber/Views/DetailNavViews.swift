@@ -10,21 +10,16 @@ func detailSceneGridColumns(_ hSizeClass: UserInterfaceSizeClass?) -> [GridItem]
 
 // MARK: - 详情页内「相关短片」网格的滚动位置记录
 //
-// 与 ScenesView / PerformersView / StudiosView 同一套范式：
+// 与 ScenesView / PerformersView / StudiosView 同一套范式（实现见 Views/ScrollRestore.swift）：
 //   ① 卡片 `.id(...)` + 背面零尺寸 GeometryReader 上报纵坐标（PreferenceKey 字典 merge）
-//   ② ScrollView 声明 `.coordinateSpace(name:)`
-//   ③ onPreferenceChange 里算「顶部可见项」，写进引用类型锚点（高频写入，但不进 @Published，
-//      否则每帧重绘整个网格）
-//   ④ 从短片详情返回（onAppear）时延迟一拍、关动画 scrollTo 回去
+//   ② ScrollView 声明 `.coordinateSpace(name:)`（标签页 / 工作室页各用独立空间名 + 独立 Key）
+//   ③ onPreferenceChange 里算「顶部可见项」，写进 ScrollMemory（引用类型，高频写入但不进
+//      @Published，否则每帧重绘整个网格）
+//   ④ 从短片详情返回时 `restore(_:exists:)`
 //
 // 与列表页的唯一差别：详情页网格上方还有标题 / 简介区，页面停在顶部时网格整体位于屏幕下方。
-// 这种情形**不记录**锚点（保持 nil → 返回时不干预），否则会把「停在标题区」误恢复成
-// 「网格第一项贴顶」，反而多跳一次。
-
-/// 网格滚动位置锚点（引用类型：滚动中每秒写几十次，进 @Published 会导致整格重绘）
-final class DetailSceneAnchor {
-    var topID: String?
-}
+// 这种情形**不记录**锚点（requiresTopCrossed: true → 保持 nil → 返回时不干预），否则会把
+// 「停在标题区」误恢复成「网格第一项贴顶」，反而多跳一次。
 
 /// 标签详情网格的纵坐标上报
 private struct TagSceneOffsetKey: PreferenceKey {
@@ -54,7 +49,7 @@ struct TagDetailView: View {
     @State private var sceneCount = 0
     @State private var loading = false
     @State private var error: String?
-    @State private var anchor = DetailSceneAnchor()
+    @State private var anchor = ScrollMemory(requiresTopCrossed: true)
 
     private static let scrollSpace = "tag.scenes.scroll"
 
@@ -111,8 +106,11 @@ struct TagDetailView: View {
                         }
                     }
                     .coordinateSpace(name: Self.scrollSpace)
-                    .onPreferenceChange(TagSceneOffsetKey.self) { updateTopVisible($0) }
-                    .onAppear { restoreScroll(proxy) }
+                    .onPreferenceChange(TagSceneOffsetKey.self) { anchor.accept($0) }
+                    .onDisappear { anchor.freeze() }
+                    .onAppear {
+                        anchor.restore(proxy) { id in scenes.contains { $0.id == id } }
+                    }
                 }
             }
         }
@@ -132,26 +130,8 @@ struct TagDetailView: View {
         }
     }
 
-    /// 顶部可见项 = 纵坐标 ≤ 0 且最接近 0 者；网格整体仍在屏幕下方（停在标题区）时不记录
-    private func updateTopVisible(_ offsets: [String: CGFloat]) {
-        guard !offsets.isEmpty else { return }
-        guard let top = offsets.filter({ $0.value <= 1 })
-            .max(by: { $0.value < $1.value })?.key else { return }
-        anchor.topID = top
-    }
-
-    /// 从短片详情返回时滚回进入前的顶部短片（等布局落定 + 关动画，避免先闪顶部再滑下来）
-    private func restoreScroll(_ proxy: ScrollViewProxy) {
-        guard let id = anchor.topID, scenes.contains(where: { $0.id == id }) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
-        }
-    }
-
     private func reload() async {
-        anchor.topID = nil
+        anchor.clear()
         scenes = []
         await loadMore()
     }
@@ -185,7 +165,7 @@ struct StudioDetailView: View {
     @State private var sceneCount = 0
     @State private var loading = false
     @State private var error: String?
-    @State private var anchor = DetailSceneAnchor()
+    @State private var anchor = ScrollMemory(requiresTopCrossed: true)
 
     private static let scrollSpace = "studio.scenes.scroll"
 
@@ -264,8 +244,11 @@ struct StudioDetailView: View {
                         }
                     }
                     .coordinateSpace(name: Self.scrollSpace)
-                    .onPreferenceChange(StudioSceneOffsetKey.self) { updateTopVisible($0) }
-                    .onAppear { restoreScroll(proxy) }
+                    .onPreferenceChange(StudioSceneOffsetKey.self) { anchor.accept($0) }
+                    .onDisappear { anchor.freeze() }
+                    .onAppear {
+                        anchor.restore(proxy) { id in scenes.contains { $0.id == id } }
+                    }
                 }
             }
         }
@@ -285,26 +268,8 @@ struct StudioDetailView: View {
         }
     }
 
-    /// 顶部可见项 = 纵坐标 ≤ 0 且最接近 0 者；网格整体仍在屏幕下方（停在标题/简介区）时不记录
-    private func updateTopVisible(_ offsets: [String: CGFloat]) {
-        guard !offsets.isEmpty else { return }
-        guard let top = offsets.filter({ $0.value <= 1 })
-            .max(by: { $0.value < $1.value })?.key else { return }
-        anchor.topID = top
-    }
-
-    /// 从短片详情返回时滚回进入前的顶部短片（等布局落定 + 关动画，避免先闪顶部再滑下来）
-    private func restoreScroll(_ proxy: ScrollViewProxy) {
-        guard let id = anchor.topID, scenes.contains(where: { $0.id == id }) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
-        }
-    }
-
     private func reload() async {
-        anchor.topID = nil
+        anchor.clear()
         scenes = []
         studio = nil
         await loadMore()

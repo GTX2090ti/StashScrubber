@@ -70,12 +70,8 @@ final class PerformerListViewModel: ObservableObject {
     }
 }
 
-/// 记录列表「顶部可见演员」：从详情页返回时据此恢复原位（与短片页同策略）
-final class PerformerScrollAnchor {
-    var topID: String?
-}
-
 /// 收集各演员卡片在滚动容器内的纵坐标，用于推算顶部可见项
+/// （锚点与恢复逻辑见 Views/ScrollRestore.swift 的 ScrollMemory）
 private struct PerformerVisibleOffsetKey: PreferenceKey {
     static let defaultValue: [String: CGFloat] = [:]
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
@@ -88,7 +84,7 @@ struct PerformersView: View {
     @EnvironmentObject private var settings: AppSettings
     /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
     @State private var path = NavigationPath()
-    @State private var anchor = PerformerScrollAnchor()
+    @State private var anchor = ScrollMemory()
 
     /// 滚动容器坐标空间名（用于取各卡片相对滚动内容的纵坐标）
     private static let scrollSpace = "performers.scroll"
@@ -96,30 +92,46 @@ struct PerformersView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
-                content
+                // 用 ZStack 包一层稳定容器：content 是 if/else 条件分支，分支 identity
+                // 变化会让挂在它上面的 onChange / onAppear 一并重建，从而丢掉「1 → 0」
+                // 的回调（滚动位置恢复会彻底失效）。修饰符必须挂在分支外的稳定层上。
+                ZStack { content }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle("演员")
                     .searchable(text: $vm.query, prompt: "搜索演员名称")
                     .onSubmit(of: .search) {
-                        anchor.topID = nil
+                        anchor.clear()
                         Task { await vm.reload() }
                     }
                     .refreshable {
-                        anchor.topID = nil
+                        anchor.clear()
                         await vm.reload()
                     }
                     // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
                     .task(id: settings.reloadKey) {
-                        anchor.topID = nil
+                        anchor.clear()
                         await vm.reload()
                     }
                     .errorAlert($vm.error)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
                     }
-                    // 从详情页返回列表根：滚回进入前的位置
-                    // （proxy 只存在于 ScrollViewReader 闭包内，本修饰符必须写在闭包内部）
+                    // 从详情页返回列表根：滚回进入前的位置。
+                    // （proxy 只存在于 ScrollViewReader 闭包内，这些修饰符必须写在闭包内部）
+                    //
+                    // 两条恢复入口都要挂：根列表在返回时可能被重建，届时
+                    // `onChange(of: path.count)` 的基准值会被重置而不再回调，
+                    // 只能靠视图重新出现时的 `onAppear` 兜底。
                     .onChange(of: path.count) { count in
-                        if count == 0 { restoreScroll(proxy) }
+                        if count > 0 {
+                            anchor.freeze()          // 进入详情页：先冻结锚点，停止接受上报
+                        } else {
+                            anchor.restore(proxy) { id in vm.performers.contains { $0.id == id } }
+                        }
+                    }
+                    .onDisappear { anchor.freeze() }
+                    .onAppear {
+                        anchor.restore(proxy) { id in vm.performers.contains { $0.id == id } }
                     }
             }
             // 导航目的地统一注册在栈根，勿下移到条件分支里（否则列表数据刷新时可能短暂失效）
@@ -181,7 +193,7 @@ struct PerformersView: View {
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(PerformerVisibleOffsetKey.self) { dict in
-                updateTopVisible(dict)
+                anchor.accept(dict)
             }
         }
     }
@@ -193,28 +205,6 @@ struct PerformersView: View {
                 key: PerformerVisibleOffsetKey.self,
                 value: [id: g.frame(in: .named(Self.scrollSpace)).minY]
             )
-        }
-    }
-
-    /// 顶部可见项 = 纵坐标 ≤ 0 且最接近 0 者；若全为正值（仍在列表顶端）则取最小者
-    private func updateTopVisible(_ offsets: [String: CGFloat]) {
-        guard !offsets.isEmpty else { return }
-        let seen = offsets.filter { $0.value <= 1 }
-        if let top = seen.max(by: { $0.value < $1.value })?.key {
-            anchor.topID = top
-        } else if let first = offsets.min(by: { $0.value < $1.value })?.key {
-            anchor.topID = first
-        }
-    }
-
-    /// 从详情返回时滚回进入前的顶部演员（关掉动画，避免闪动）
-    private func restoreScroll(_ proxy: ScrollViewProxy) {
-        guard let id = anchor.topID,
-              vm.performers.contains(where: { $0.id == id }) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { proxy.scrollTo(id, anchor: .top) }
         }
     }
 }
