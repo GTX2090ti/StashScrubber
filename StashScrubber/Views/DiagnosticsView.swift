@@ -184,9 +184,12 @@ struct DiagnosticsView: View {
 
     private static func probeGraphQL(_ t: Target, direct: Bool = false) async -> NetProbe.Result {
         let title = "GraphQL 探测 · \(t.title)" + (direct ? "（直连对比）" : "")
-        let session = direct ? NetTransport.direct : NetTransport.api
+        let session = direct ? NetTransport.direct : NetTransport.probe
         return await NetProbe.hardTimeout(8, category: .diag, title: title,
-                                          url: StashEndpoint.graphqlURL(t.url)?.absoluteString) {
+                                          url: StashEndpoint.graphqlURL(t.url)?.absoluteString,
+                                          onTimeout: direct ? nil : {
+                                              NetTransport.resetProbe(reason: "诊断探测硬超时（\(t.title)），重建探测会话")
+                                          }) {
             await NetProbe.graphql(base: t.url, apiKey: t.apiKey,
                                    query: "{ version { version } }", timeout: 6,
                                    session: session, category: .diag, title: title)
@@ -197,8 +200,12 @@ struct DiagnosticsView: View {
         let q = #"query { findScenes(filter: {per_page: 1}) { scenes { paths { screenshot } } } }"#
         let title = "图片链路 · \(p.name)"
         let r = await NetProbe.hardTimeout(8, category: .diag, title: title,
-                                           url: StashEndpoint.graphqlURL(p.url)?.absoluteString) {
+                                           url: StashEndpoint.graphqlURL(p.url)?.absoluteString,
+                                           onTimeout: {
+                                               NetTransport.resetProbe(reason: "诊断图片链路探测硬超时（\(p.name)），重建探测会话")
+                                           }) {
             await NetProbe.graphql(base: p.url, apiKey: p.apiKey, query: q, timeout: 6,
+                                   session: NetTransport.probe,
                                    category: .diag, title: title)
         }
         if let err = r.error {
@@ -212,7 +219,10 @@ struct DiagnosticsView: View {
             out.append(Row(title: "图片下载 · \(p.name)", detail: "图片地址无效：\(shot)", state: .fail))
             return out
         }
-        let img = await NetProbe.hardTimeout(12, category: .diag, title: "图片下载 · \(p.name)", url: finalURL) {
+        let img = await NetProbe.hardTimeout(12, category: .diag, title: "图片下载 · \(p.name)", url: finalURL,
+                                             onTimeout: {
+                                                 NetTransport.resetImage(reason: "诊断图片下载硬超时（\(p.name)），重建图片会话")
+                                             }) {
             await NetProbe.image(urlString: finalURL, apiKey: p.apiKey, timeout: 10,
                                  category: .diag, title: "图片下载 · \(p.name)")
         }

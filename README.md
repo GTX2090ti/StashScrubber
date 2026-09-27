@@ -45,7 +45,7 @@ xcodegen generate     # 生成 StashScrubber.xcodeproj
 open StashScrubber.xcodeproj
 ```
 
-方式 B（手工）：Xcode 新建 iOS App 项目（Storyboard 关闭、SwiftUI 生命周期），把 `StashScrubber/` 目录下所有 `.swift` 拖入工程，Info.plist 增加 `NSAppTransportSecurity → NSAllowsArbitraryLoads = YES`（内网 HTTP 必须），General → Supported Destinations 同时勾选 iPhone 与 iPad。
+方式 B（手工）：Xcode 新建 iOS App 项目（Storyboard 关闭、SwiftUI 生命周期），把 `StashScrubber/` 目录下所有 `.swift` 拖入工程，Info.plist 增加 `NSAppTransportSecurity → NSAllowsArbitraryLoads = YES`（内网 HTTP 必须），并增加 `NSLocalNetworkUsageDescription`（iOS 14+ 访问内网地址必须声明，文案随意），General → Supported Destinations 同时勾选 iPhone 与 iPad。
 
 签名后即可真机运行。
 

@@ -171,10 +171,14 @@ final class LatencyMonitor: ObservableObject, @unchecked Sendable {
         if state(for: url) == .idle { update(.probing, for: url) }
 
         let r = await NetProbe.hardTimeout(Self.hardTimeout, category: .diag,
-                                           title: "延迟测速 · \(name)", url: url) {
+                                            title: "延迟测速 · \(name)", url: url,
+                                            onTimeout: {
+                                                NetTransport.resetProbe(reason: "延迟测速硬超时（\(name)），重建探测会话丢弃吊死连接")
+                                            }) {
             await NetProbe.graphql(base: url, apiKey: apiKey,
                                    query: "{ version { version } }",
                                    timeout: Self.hardTimeout - 1,
+                                   session: NetTransport.probe,
                                    category: .diag,
                                    title: "延迟测速 · \(name)")
         }

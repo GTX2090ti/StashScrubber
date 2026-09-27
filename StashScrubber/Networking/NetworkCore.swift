@@ -328,6 +328,39 @@ enum NetTransport {
         NetLog.shared.record(category: .diag, level: .warn, title: "重建图片会话", message: reason)
     }
 
+    private static let probeLock = NSLock()
+    private static var probeSession = makeProbe()
+
+    /// 探测会话：延迟测速 / 自动选路 / 失败自愈 / 诊断 共用。
+    /// 与 api 会话隔离——探测超时只重建本会话，不会误伤在途的查询与刮削长请求
+    /// （刮削最长 120s，若被探测超时连带取消会直接中断用户操作）。
+    /// 与 api 一样可重建，避免被吊死的探测连接占满连接池后拖死选路 / 自愈。
+    static var probe: URLSession {
+        probeLock.lock()
+        defer { probeLock.unlock() }
+        return probeSession
+    }
+
+    private static func makeProbe() -> URLSession {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 5
+        cfg.timeoutIntervalForResource = 8
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        return URLSession(configuration: cfg)
+    }
+
+    /// 重建探测会话并丢弃旧连接（探测硬超时后调用）
+    static func resetProbe(reason: String) {
+        probeLock.lock()
+        let old = probeSession
+        probeSession = makeProbe()
+        probeLock.unlock()
+        old.invalidateAndCancel()
+        NetLog.shared.record(category: .diag, level: .warn, title: "重建探测会话", message: reason)
+    }
+
     /// 绕过系统代理的直连会话（诊断对比用）：可区分「系统代理吊死」与「本地网络权限挂起」
     static let direct: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
@@ -375,25 +408,45 @@ enum NetProbe {
         }
     }
 
-    /// 硬超时包装：URLSession 自身超时在「本地网络权限挂起」等场景会失灵，
-    /// 到点强制取消探测任务并返回占位结果，保证调用方（诊断页）绝不整体吊死。
+    /// 硬超时包装：URLSession 自身超时在「本地网络权限挂起 / 连接池被吊死」等场景会失灵，
+    /// 到点强制返回占位结果，保证调用方（选路 / 自愈 / 诊断）绝不整体吊死。
+    ///
+    /// 与 NetCall.deadline 同一套机制（OneShotGate + detached 任务），**不能**用 withTaskGroup：
+    /// TaskGroup 退出时会隐式等待所有子任务结束，若被吊死的探测请求不响应取消，超时兜底就白做了——
+    /// 调用方仍会被无限拖住，表现为「用一段时间后突然连不上，杀掉 App 重启才恢复」。
+    /// 这里超时立即返回占位结果，丢弃的请求由 `onTimeout` 重建会话清理（invalidateAndCancel
+    /// 会取消该会话的全部在途请求，释放被吊死连接占用的连接池）。
+    /// - Parameter onTimeout: 超时兜底生效时调用（重建吊死的会话，默认不调用）
     static func hardTimeout(_ seconds: Double,
                             category: NetCategory = .diag,
                             title: String,
                             url: String? = nil,
+                            onTimeout: (@Sendable () -> Void)? = nil,
                             _ op: @escaping @Sendable () async -> Result) async -> Result {
-        let out = await withTaskGroup(of: Result.self) { g -> Result in
-            g.addTask { await op() }
-            g.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                var r = Result(latency: seconds,
-                               error: "硬超时 \(Int(seconds))s（探测无响应，已强制终止）")
-                r.hardTimedOut = true
-                return r
+        let gate = OneShotGate<Result>()
+        let latch = CancelLatch()
+        let out: Result
+        do {
+            out = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Result, Error>) in
+                latch.mount { _ = gate.tryResume(cont, .failure(CancellationError())) }
+
+                // 用 detached：避免继承主 actor，保证计时器一定会准时触发
+                Task.detached(priority: .userInitiated) {
+                    let r = await op()
+                    _ = gate.tryResume(cont, .success(r))
+                }
+                Task.detached(priority: .high) {
+                    try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                    var r = Result(latency: seconds,
+                                   error: "硬超时 \(Int(seconds))s（探测无响应，已强制终止）")
+                    r.hardTimedOut = true
+                    guard gate.tryResume(cont, .success(r)) else { return }
+                    onTimeout?()
+                }
             }
-            let first = await g.next() ?? Result(error: "无结果")
-            g.cancelAll()
-            return first
+        } catch {
+            // 任务被取消（视图消失 / 页面切换）：与 op 自身的取消返回保持一致
+            out = Result(error: "已取消")
         }
         // 仅硬超时兜底时补记日志：探测任务自身可能永不返回，无法自行记录
         if out.hardTimedOut {

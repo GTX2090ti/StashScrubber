@@ -46,6 +46,8 @@ targets:
         # 内网 HTTP 访问 Stash 必须放开 ATS
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # iOS 14+ 访问本地网络（内网 IP / NAS）必须声明，否则系统直接拦截连接
+        NSLocalNetworkUsageDescription: App 需要访问本地网络，用于连接您家中的 Stash 服务器（内网地址）。
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
