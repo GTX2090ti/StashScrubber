@@ -185,11 +185,12 @@ struct DiagnosticsView: View {
     private static func probeGraphQL(_ t: Target, direct: Bool = false) async -> NetProbe.Result {
         let title = "GraphQL 探测 · \(t.title)" + (direct ? "（直连对比）" : "")
         let session = direct ? NetTransport.direct : NetTransport.probe
+        let onTimeout: (@Sendable () -> Void)? = direct ? nil : {
+            NetTransport.resetProbe(reason: "诊断探测硬超时（\(t.title)），重建探测会话")
+        }
         return await NetProbe.hardTimeout(8, category: .diag, title: title,
                                           url: StashEndpoint.graphqlURL(t.url)?.absoluteString,
-                                          onTimeout: direct ? nil : {
-                                              NetTransport.resetProbe(reason: "诊断探测硬超时（\(t.title)），重建探测会话")
-                                          }) {
+                                          onTimeout: onTimeout) {
             await NetProbe.graphql(base: t.url, apiKey: t.apiKey,
                                    query: "{ version { version } }", timeout: 6,
                                    session: session, category: .diag, title: title)
