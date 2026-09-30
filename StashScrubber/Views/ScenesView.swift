@@ -243,6 +243,29 @@ struct ScenesView: View {
     }
 
     @ViewBuilder
+    private var pageBar: some View {
+        HStack {
+            Button {
+                Task { await vm.goToPage(vm.currentPage - 1) }
+            } label: {
+                Label("上一页", systemImage: "chevron.left")
+            }
+            .disabled(!vm.canPrev || vm.loading)
+            Spacer()
+            Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                Task { await vm.goToPage(vm.currentPage + 1) }
+            } label: {
+                Label("下一页", systemImage: "chevron.right")
+            }
+            .disabled(!vm.canNext || vm.loading)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal)
+    }
+
     private var content: some View {
         if vm.loading && vm.scenes.isEmpty {
             if vm.timedOut {
@@ -261,6 +284,8 @@ struct ScenesView: View {
                            retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
+                // 顶部翻页栏
+                pageBar
                 if viewMode == "grid" {
                     // 海报网格：一排固定 3 个竖版 2:3 海报卡片
                     LazyVGrid(columns: gridColumns, spacing: 18) {
@@ -290,30 +315,8 @@ struct ScenesView: View {
                     .padding(.horizontal)
                 }
 
-                // 翻页栏
-                HStack {
-                    Button {
-                        Task { await vm.goToPage(vm.currentPage - 1) }
-                    } label: {
-                        Label("上一页", systemImage: "chevron.left")
-                    }
-                    .disabled(!vm.canPrev || vm.loading)
-
-                    Spacer()
-                    Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-
-                    Button {
-                        Task { await vm.goToPage(vm.currentPage + 1) }
-                    } label: {
-                        Label("下一页", systemImage: "chevron.right")
-                    }
-                    .disabled(!vm.canNext || vm.loading)
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal)
+                // 翻页栏（底部）
+                pageBar
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(SceneVisibleOffsetKey.self) { dict in

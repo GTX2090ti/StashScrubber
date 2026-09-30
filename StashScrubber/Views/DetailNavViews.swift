@@ -50,8 +50,14 @@ struct TagDetailView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var anchor = ScrollMemory(requiresTopCrossed: true)
+    @State private var currentPage = 1
+    private let perPage = 24
 
     private static let scrollSpace = "tag.scenes.scroll"
+
+    private var totalPages: Int { max(1, Int(ceil(Double(sceneCount) / Double(perPage)))) }
+    private var canPrev: Bool { currentPage > 1 }
+    private var canNext: Bool { currentPage < totalPages }
 
     var body: some View {
         Group {
@@ -94,15 +100,23 @@ struct TagDetailView: View {
                             }
                             .padding(.horizontal)
 
-                            if sceneCount > scenes.count {
-                                Button {
-                                    Task { await loadMore() }
-                                } label: {
-                                    if loading { ProgressView() }
-                                    else { Label("加载更多", systemImage: "arrow.down.circle") }
+                            // 翻页栏
+                            HStack {
+                                Button { Task { await goToPage(currentPage - 1) } } label: {
+                                    Label("上一页", systemImage: "chevron.left")
                                 }
-                                .padding(.vertical, 16)
+                                .disabled(!canPrev || loading)
+                                Spacer()
+                                Text("第 \(currentPage) / \(totalPages) 页")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button { Task { await goToPage(currentPage + 1) } } label: {
+                                    Label("下一页", systemImage: "chevron.right")
+                                }
+                                .disabled(!canNext || loading)
                             }
+                            .padding(.horizontal)
+                            .padding(.bottom, 8)
                         }
                     }
                     .coordinateSpace(name: Self.scrollSpace)
@@ -140,21 +154,20 @@ struct TagDetailView: View {
     }
 
     private func reload() async {
-        anchor.clear()
-        scenes = []
-        await loadMore()
+        await goToPage(1)
     }
 
-    private func loadMore() async {
-        guard !loading else { return }
+    private func goToPage(_ page: Int) async {
+        guard page >= 1 && page <= totalPages else { return }
+        currentPage = page
+        anchor.clear()
         loading = true
         defer { loading = false }
         do {
             let client = try settings.makeClient()
-            let page = scenes.count / 24 + 1
-            let p = try await StashAPI.findScenesByTag(client, tagId: tagID, page: page)
+            let p = try await StashAPI.findScenesByTag(client, tagId: tagID, page: page, perPage: perPage)
             sceneCount = p.count
-            scenes += p.scenes
+            scenes = p.scenes
         } catch {
             self.error = NetError.friendly(error)
         }
@@ -175,8 +188,14 @@ struct StudioDetailView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var anchor = ScrollMemory(requiresTopCrossed: true)
+    @State private var currentPage = 1
+    private let perPage = 24
 
     private static let scrollSpace = "studio.scenes.scroll"
+
+    private var totalPages: Int { max(1, Int(ceil(Double(sceneCount) / Double(perPage)))) }
+    private var canPrev: Bool { currentPage > 1 }
+    private var canNext: Bool { currentPage < totalPages }
 
     var body: some View {
         Group {
@@ -241,15 +260,23 @@ struct StudioDetailView: View {
                             }
                             .padding(.horizontal)
 
-                            if sceneCount > scenes.count {
-                                Button {
-                                    Task { await loadMore() }
-                                } label: {
-                                    if loading { ProgressView() }
-                                    else { Label("加载更多", systemImage: "arrow.down.circle") }
+                            // 翻页栏
+                            HStack {
+                                Button { Task { await goToPage(currentPage - 1) } } label: {
+                                    Label("上一页", systemImage: "chevron.left")
                                 }
-                                .padding(.vertical, 16)
+                                .disabled(!canPrev || loading)
+                                Spacer()
+                                Text("第 \(currentPage) / \(totalPages) 页")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button { Task { await goToPage(currentPage + 1) } } label: {
+                                    Label("下一页", systemImage: "chevron.right")
+                                }
+                                .disabled(!canNext || loading)
                             }
+                            .padding(.horizontal)
+                            .padding(.bottom, 8)
                         }
                     }
                     .coordinateSpace(name: Self.scrollSpace)
@@ -287,14 +314,14 @@ struct StudioDetailView: View {
     }
 
     private func reload() async {
-        anchor.clear()
-        scenes = []
-        studio = nil
-        await loadMore()
+        currentPage = 1
+        await goToPage(1)
     }
 
-    private func loadMore() async {
-        guard !loading else { return }
+    private func goToPage(_ page: Int) async {
+        guard page >= 1 && page <= totalPages else { return }
+        currentPage = page
+        anchor.clear()
         loading = true
         defer { loading = false }
         do {
@@ -302,10 +329,9 @@ struct StudioDetailView: View {
             if studio == nil {
                 studio = try await StashAPI.findStudioByID(client, id: studioID)
             }
-            let page = scenes.count / 24 + 1
-            let p = try await StashAPI.findScenesByStudio(client, studioId: studioID, page: page)
+            let p = try await StashAPI.findScenesByStudio(client, studioId: studioID, page: page, perPage: perPage)
             sceneCount = p.count
-            scenes += p.scenes
+            scenes = p.scenes
         } catch {
             self.error = NetError.friendly(error)
         }

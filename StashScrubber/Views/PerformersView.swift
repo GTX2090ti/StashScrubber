@@ -178,6 +178,25 @@ struct PerformersView: View {
         }
     }
 
+    private var pageBar: some View {
+        HStack {
+            Button { Task { await vm.goToPage(vm.currentPage - 1) } } label: {
+                Label("上一页", systemImage: "chevron.left")
+            }
+            .disabled(!vm.canPrev || vm.loading)
+            Spacer()
+            Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button { Task { await vm.goToPage(vm.currentPage + 1) } } label: {
+                Label("下一页", systemImage: "chevron.right")
+            }
+            .disabled(!vm.canNext || vm.loading)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal)
+    }
+
     @ViewBuilder
     private var content: some View {
         if vm.loading && vm.performers.isEmpty {
@@ -197,6 +216,7 @@ struct PerformersView: View {
                            retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
+                pageBar
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 18) {
                     ForEach(vm.performers) { p in
                         NavigationLink(value: PerformerNavID(id: p.id, name: p.name)) {
@@ -209,23 +229,8 @@ struct PerformersView: View {
                 }
                 .padding(.horizontal)
 
-                // 翻页栏
-                HStack {
-                    Button { Task { await vm.goToPage(vm.currentPage - 1) } } label: {
-                        Label("上一页", systemImage: "chevron.left")
-                    }
-                    .disabled(!vm.canPrev || vm.loading)
-                    Spacer()
-                    Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button { Task { await vm.goToPage(vm.currentPage + 1) } } label: {
-                        Label("下一页", systemImage: "chevron.right")
-                    }
-                    .disabled(!vm.canNext || vm.loading)
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal)
+                // 翻页栏（底部）
+                pageBar
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(PerformerVisibleOffsetKey.self) { dict in
@@ -278,6 +283,7 @@ struct PerformerDetailView: View {
     @State private var scenes: [Scene] = []
     @State private var sceneCount = 0
     @State private var scenesLoading = false
+    @State private var scenesPage = 1
     @Environment(\.horizontalSizeClass) private var hSizeClass
 
     var body: some View {
@@ -406,34 +412,43 @@ struct PerformerDetailView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                if sceneCount > scenes.count {
-                    Button {
-                        Task { await loadMoreScenes() }
-                    } label: {
-                        if scenesLoading { ProgressView() }
-                        else { Label("加载更多", systemImage: "arrow.down.circle") }
+                // 翻页栏
+                HStack {
+                    Button { Task { await goToScenesPage(scenesPage - 1) } } label: {
+                        Label("上一页", systemImage: "chevron.left")
                     }
-                    .padding(.vertical, 8)
+                    .disabled(scenesPage <= 1 || scenesLoading)
+                    Spacer()
+                    Text("第 \(scenesPage) / \(scenesTotalPages) 页")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { Task { await goToScenesPage(scenesPage + 1) } } label: {
+                        Label("下一页", systemImage: "chevron.right")
+                    }
+                    .disabled(scenesPage >= scenesTotalPages || scenesLoading)
                 }
+                .padding(.vertical, 8)
             }
         }
     }
 
+    private var scenesTotalPages: Int { max(1, Int(ceil(Double(sceneCount) / 24))) }
+
     private func reloadScenes() async {
-        scenes = []
-        await loadMoreScenes()
+        scenesPage = 1
+        await goToScenesPage(1)
     }
 
-    private func loadMoreScenes() async {
-        guard !scenesLoading else { return }
+    private func goToScenesPage(_ page: Int) async {
+        guard page >= 1 && page <= scenesTotalPages else { return }
+        scenesPage = page
         scenesLoading = true
         defer { scenesLoading = false }
         do {
             let client = try settings.makeClient()
-            let page = scenes.count / 24 + 1
-            let p = try await StashAPI.findScenesByPerformer(client, performerId: performerID, page: page)
+            let p = try await StashAPI.findScenesByPerformer(client, performerId: performerID, page: page, perPage: 24)
             sceneCount = p.count
-            scenes += p.scenes
+            scenes = p.scenes
         } catch {
             self.error = NetError.friendly(error)
         }

@@ -172,6 +172,25 @@ struct StudiosView: View {
         }
     }
 
+    private var pageBar: some View {
+        HStack {
+            Button { Task { await vm.goToPage(vm.currentPage - 1) } } label: {
+                Label("上一页", systemImage: "chevron.left")
+            }
+            .disabled(!vm.canPrev || vm.loading)
+            Spacer()
+            Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button { Task { await vm.goToPage(vm.currentPage + 1) } } label: {
+                Label("下一页", systemImage: "chevron.right")
+            }
+            .disabled(!vm.canNext || vm.loading)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal)
+    }
+
     @ViewBuilder
     private var content: some View {
         if vm.loading && vm.studios.isEmpty {
@@ -191,6 +210,7 @@ struct StudiosView: View {
                            retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
+                pageBar
                 LazyVGrid(columns: gridColumns, spacing: 18) {
                     ForEach(vm.studios) { st in
                         NavigationLink(value: StudioNavID(id: st.id, name: st.name)) {
@@ -203,23 +223,8 @@ struct StudiosView: View {
                 }
                 .padding(.horizontal)
 
-                // 翻页栏
-                HStack {
-                    Button { Task { await vm.goToPage(vm.currentPage - 1) } } label: {
-                        Label("上一页", systemImage: "chevron.left")
-                    }
-                    .disabled(!vm.canPrev || vm.loading)
-                    Spacer()
-                    Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button { Task { await vm.goToPage(vm.currentPage + 1) } } label: {
-                        Label("下一页", systemImage: "chevron.right")
-                    }
-                    .disabled(!vm.canNext || vm.loading)
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal)
+                // 翻页栏（底部）
+                pageBar
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(StudioVisibleOffsetKey.self) { dict in
