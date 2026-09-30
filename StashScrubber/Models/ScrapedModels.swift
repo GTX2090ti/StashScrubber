@@ -54,8 +54,8 @@ struct ScrapedPerformer: Codable, Hashable {
     let ethnicity: String?
     let hairColor: String?
     let eyeColor: String?
-    let height: Int?      // cm
-    let weight: Int?      // kg
+    let height: String?   // 刮削源可能返回 "156" 字符串，统一按字符串接收再转 Int
+    let weight: String?   // 同上
     let measurements: String?
     let fakeTits: String?
     let tattoos: String?

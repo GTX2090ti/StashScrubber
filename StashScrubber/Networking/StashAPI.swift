@@ -575,8 +575,8 @@ enum StashAPI {
             if let v = p.ethnicity { input.ethnicity = v; changed += 1 }
             if let v = p.hairColor { input.hairColor = v; changed += 1 }
             if let v = p.eyeColor { input.eyeColor = v; changed += 1 }
-            if let v = p.height { input.height = v; changed += 1 }
-            if let v = p.weight { input.weight = v; changed += 1 }
+            if let v = p.height, let hInt = Int(v) { input.height = hInt; changed += 1 }
+            if let v = p.weight, let wInt = Int(v) { input.weight = wInt; changed += 1 }
             if let v = p.measurements { input.measurements = v; changed += 1 }
             if let v = p.fakeTits { input.fakeTits = v; changed += 1 }
             if let v = p.tattoos { input.tattoos = v; changed += 1 }
