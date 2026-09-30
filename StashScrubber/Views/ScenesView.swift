@@ -242,7 +242,6 @@ struct ScenesView: View {
         }
     }
 
-    @ViewBuilder
     private var pageBar: some View {
         HStack {
             Button {
@@ -266,6 +265,7 @@ struct ScenesView: View {
         .padding(.horizontal)
     }
 
+    @ViewBuilder
     private var content: some View {
         if vm.loading && vm.scenes.isEmpty {
             if vm.timedOut {
