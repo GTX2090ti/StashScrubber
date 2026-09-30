@@ -14,6 +14,10 @@ struct StashScrubberApp: App {
                 .environmentObject(WiFiAutoSwitch.shared)
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
+                        // 回到前台：先丢弃后台期间可能已失效的 keep-alive 连接（不重建的话
+                        // 第一次请求会撞到死连接，表现为「放一会儿就连不上」），再做选路
+                        NetTransport.resetAPI(reason: "App 回到前台，重建 API 会话")
+                        NetTransport.resetImage(reason: "App 回到前台，重建图片会话")
                         Task {
                             // 回到前台：先按 WiFi 规则（如有）锁定/切换，再做一次内网优先选路
                             await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)

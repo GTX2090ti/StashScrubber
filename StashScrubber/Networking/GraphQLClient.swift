@@ -95,7 +95,11 @@ final class GraphQLClient {
         let title = logTitle
         func elapsedMs() -> Double { Date().timeIntervalSince(t0) * 1000 }
 
-        do {
+        // 是否为写操作：mutation 不自动重试（可能重复写入），query 可安全重试
+        let isMutationCall = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
+
+        // 单次请求 + 解码（不含外层重试逻辑）
+        func once() async throws -> T {
             // 硬超时兜底：URLSession 自身超时在连接池被吊死 / 网络切换等场景会失灵，
             // 到点强制返回并重建会话（丢掉吊死连接），保证视图 loading 状态一定复位。
             let r = try await NetCall.deadline(timeout, op: op, onTimeout: {
@@ -156,9 +160,14 @@ final class GraphQLClient {
                                  bytes: data.count)
             NetHealth.shared.noteSuccess()
             return d
+        }
+
+        do {
+            return try await once()
         } catch {
-            // 取消（页面切换 / 视图复用）属噪音，不入日志
+            // 取消（页面切换 / 视图复用）属噪音，不入日志，直接抛
             if NetError.isCancellation(error) { throw error }
+
             // 上面各分支已记录过业务错误，这里只补记网络层异常
             if !(error is StashAPIError) {
                 NetLog.shared.record(category: .graphql, level: .error,
@@ -166,11 +175,43 @@ final class GraphQLClient {
                                      url: url.absoluteString, ms: elapsedMs(),
                                      message: NetError.friendly(error))
             }
-            // 链路层失败累加：连续两次即触发一次自动重新选路（内外网翻面自愈）
-            if NetError.isConnectivity(error) {
-                NetHealth.shared.noteFailure(NetError.friendly(error))
+
+            // 关键自愈：查询请求遇到链路层失败（keep-alive 死连接 / 网络抖动 / 半开连接）
+            // 先重建会话丢弃吊死连接池，再自动重试一次——多数情况用户无感，不用杀 App 重启。
+            // mutation 不自动重试，避免重复写入。
+            if NetError.isConnectivity(error), !isMutationCall {
+                let reason = NetError.friendly(error)
+                NetTransport.resetAPI(reason: "查询「\(op)」链路失败（\(reason)），重建会话后自动重试一次")
+                do {
+                    let v = try await once()
+                    NetLog.shared.record(category: .diag, level: .warn,
+                                         title: "自动重试成功",
+                                         message: "「\(op)」首次失败（\(reason)），重建会话后重试成功")
+                    return v
+                } catch {
+                    if NetError.isCancellation(error) { throw error }
+                    if !(error is StashAPIError) {
+                        NetLog.shared.record(category: .graphql, level: .error,
+                                             title: "\(logTitle) · \(op)", method: "POST",
+                                             url: url.absoluteString, ms: elapsedMs(),
+                                             message: "重试仍失败：" + NetError.friendly(error))
+                    }
+                    fallthroughToHealth(error)
+                    throw error
+                }
             }
+            fallthroughToHealth(error)
             throw error
+        }
+
+        // 链路层失败累加：连续两次即触发一次自动重新选路（内外网翻面自愈）。
+        // 触发自愈时同时重建会话——否则切了地址还共用死连接池，新请求照样卡死。
+        func fallthroughToHealth(_ error: Error) {
+            if NetError.isConnectivity(error) {
+                if NetHealth.shared.noteFailure(NetError.friendly(error)) {
+                    NetTransport.resetAPI(reason: "连续链路失败触发自愈：\(NetError.friendly(error))，重建会话")
+                }
+            }
         }
     }
 
