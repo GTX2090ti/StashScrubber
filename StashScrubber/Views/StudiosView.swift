@@ -9,40 +9,41 @@ final class StudioListViewModel: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     @Published var total = 0
-    /// 加载卡住（网络层未按期返回）：显示重试入口，避免页面永久转圈
     @Published var timedOut = false
 
-    private var page = 1
+    let perPage = 120
+    @Published var currentPage = 1
+
     private var lastQuery = ""
-    /// 请求代号：reload 时自增，迟到的旧响应据此丢弃，不覆盖新结果
     private var generation = 0
-    /// 看门狗秒数：超过即认为网络层卡死（API 硬超时 25s + 解析余量）
     static let watchdogSeconds: Double = 30
 
-    var canLoadMore: Bool { studios.count < total && total > 0 }
+    var totalPages: Int { max(1, Int(ceil(Double(total) / Double(perPage)))) }
+    var canPrev: Bool { currentPage > 1 }
+    var canNext: Bool { currentPage < totalPages }
 
     func reload() async {
-        page = 1
+        currentPage = 1
         lastQuery = query
-        studios = []
         error = nil
         timedOut = false
         generation += 1
         await fetch(gen: generation)
     }
 
-    /// 分页「加载更多」（同一代内防重入）
-    func load() async {
-        guard !loading else { return }
+    func goToPage(_ page: Int) async {
+        guard page >= 1 && page <= totalPages else { return }
+        currentPage = page
+        error = nil
+        timedOut = false
+        generation += 1
         await fetch(gen: generation)
     }
 
-    /// 重试：清空并重新拉第一页
     func retry() async { await reload() }
 
     private func fetch(gen: Int) async {
         loading = true
-        // 只有「当前代号」的请求结束才复位 loading
         defer { if gen == generation { loading = false } }
 
         let watchdog = Task { [weak self] in
@@ -54,12 +55,11 @@ final class StudioListViewModel: ObservableObject {
 
         do {
             let client = try AppSettings.shared.makeClient()
-            let p = try await StashAPI.findStudios(client, query: lastQuery, page: page)
-            guard gen == generation else { return }   // 过期响应：丢弃
+            let p = try await StashAPI.findStudios(client, query: lastQuery, page: currentPage, perPage: perPage)
+            guard gen == generation else { return }
             timedOut = false
             total = p.count
-            if page == 1 { studios = p.studios } else { studios += p.studios }
-            page += 1
+            studios = p.studios
             error = nil
             AppSettings.shared.markSynced()
         } catch {
@@ -203,15 +203,23 @@ struct StudiosView: View {
                 }
                 .padding(.horizontal)
 
-                if vm.canLoadMore {
-                    Button {
-                        Task { await vm.load() }
-                    } label: {
-                        if vm.loading { ProgressView() }
-                        else { Label("加载更多（共 \(vm.total)）", systemImage: "arrow.down.circle") }
+                // 翻页栏
+                HStack {
+                    Button { Task { await vm.goToPage(vm.currentPage - 1) } } label: {
+                        Label("上一页", systemImage: "chevron.left")
                     }
-                    .padding(.vertical, 16)
+                    .disabled(!vm.canPrev || vm.loading)
+                    Spacer()
+                    Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { Task { await vm.goToPage(vm.currentPage + 1) } } label: {
+                        Label("下一页", systemImage: "chevron.right")
+                    }
+                    .disabled(!vm.canNext || vm.loading)
                 }
+                .padding(.vertical, 12)
+                .padding(.horizontal)
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(StudioVisibleOffsetKey.self) { dict in
