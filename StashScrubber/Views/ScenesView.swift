@@ -13,45 +13,45 @@ final class SceneListViewModel: ObservableObject {
     @Published var sort: String = "date"
     @Published var direction: String = "DESC"
     @Published var filter = SceneFilterState()
-    /// 加载卡住（网络层未按期返回）：显示重试入口，避免页面永久转圈
     @Published var timedOut = false
 
-    private var page = 1
+    let perPage = 120
+    @Published var currentPage = 1
+
     private var lastQuery = ""
     private var lastSort = ""
     private var lastDirection = ""
-    /// 请求代号：reload 时自增，迟到的旧响应据此丢弃，不覆盖新结果
     private var generation = 0
-    /// 看门狗秒数：超过即认为网络层卡死（API 硬超时 25s + 解析余量）
     static let watchdogSeconds: Double = 30
 
-    var canLoadMore: Bool { scenes.count < total && total > 0 }
+    var totalPages: Int { max(1, Int(ceil(Double(total) / Double(perPage)))) }
+    var canPrev: Bool { currentPage > 1 }
+    var canNext: Bool { currentPage < totalPages }
 
     func reload() async {
-        page = 1
+        currentPage = 1
         lastQuery = query
         lastSort = sort
         lastDirection = direction
-        scenes = []
         error = nil
         timedOut = false
         generation += 1
         await fetch(gen: generation)
     }
 
-    /// 分页「加载更多」（同一代内防重入）
-    func load() async {
-        guard !loading else { return }
+    func goToPage(_ page: Int) async {
+        guard page >= 1 && page <= totalPages else { return }
+        currentPage = page
+        error = nil
+        timedOut = false
+        generation += 1
         await fetch(gen: generation)
     }
 
-    /// 重试：清空并重新拉第一页
     func retry() async { await reload() }
 
     private func fetch(gen: Int) async {
         loading = true
-        // 只有「当前代号」的请求结束才复位 loading：
-        // 否则迟到的旧请求（或永不到达的旧请求）会把新请求的加载态弄丢 / 弄乱
         defer { if gen == generation { loading = false } }
 
         let watchdog = Task { [weak self] in
@@ -64,16 +64,15 @@ final class SceneListViewModel: ObservableObject {
         do {
             let client = try AppSettings.shared.makeClient()
             let p = try await StashAPI.findScenes(
-                client, query: lastQuery, page: page,
+                client, query: lastQuery, page: currentPage, perPage: perPage,
                 sort: lastSort.isEmpty ? sort : lastSort,
                 direction: lastDirection.isEmpty ? direction : lastDirection,
                 sceneFilter: filter.toSceneFilter()
             )
-            guard gen == generation else { return }   // 过期响应：丢弃
+            guard gen == generation else { return }
             timedOut = false
             total = p.count
-            if page == 1 { scenes = p.scenes } else { scenes += p.scenes }
-            page += 1
+            scenes = p.scenes
             error = nil
             AppSettings.shared.markSynced()
         } catch {
@@ -293,18 +292,30 @@ struct ScenesView: View {
                     .padding(.horizontal)
                 }
 
-                if vm.canLoadMore {
+                // 翻页栏
+                HStack {
                     Button {
-                        Task { await vm.load() }
+                        Task { await vm.goToPage(vm.currentPage - 1) }
                     } label: {
-                        if vm.loading {
-                            ProgressView()
-                        } else {
-                            Label("加载更多（共 \(vm.total)）", systemImage: "arrow.down.circle")
-                        }
+                        Label("上一页", systemImage: "chevron.left")
                     }
-                    .padding(.vertical, 16)
+                    .disabled(!vm.canPrev || vm.loading)
+
+                    Spacer()
+                    Text("第 \(vm.currentPage) / \(vm.totalPages) 页（共 \(vm.total)）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+
+                    Button {
+                        Task { await vm.goToPage(vm.currentPage + 1) }
+                    } label: {
+                        Label("下一页", systemImage: "chevron.right")
+                    }
+                    .disabled(!vm.canNext || vm.loading)
                 }
+                .padding(.vertical, 12)
+                .padding(.horizontal)
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(SceneVisibleOffsetKey.self) { dict in
