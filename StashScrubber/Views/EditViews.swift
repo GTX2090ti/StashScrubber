@@ -258,11 +258,11 @@ struct PerformerEditView: View {
                 name: name.isEmpty ? nil : name,
                 disambiguation: disambiguation.isEmpty ? nil : disambiguation,
                 birthdate: birthdate.isEmpty ? nil : birthdate,
-                details: details.isEmpty ? nil : details,
                 country: country.isEmpty ? nil : country,
                 ethnicity: ethnicity.isEmpty ? nil : ethnicity,
                 measurements: measurements.isEmpty ? nil : measurements,
                 careerLength: careerLength.isEmpty ? nil : careerLength,
+                details: details.isEmpty ? nil : details,
                 rating100: rating > 0 ? Int(rating) : 0,
                 tagIds: Array(tagIds)
             )
@@ -361,11 +361,11 @@ struct PerformerCreateView: View {
                 name: trimmed,
                 disambiguation: disambiguation.isEmpty ? nil : disambiguation,
                 birthdate: birthdate.isEmpty ? nil : birthdate,
-                details: details.isEmpty ? nil : details,
                 country: country.isEmpty ? nil : country,
                 ethnicity: ethnicity.isEmpty ? nil : ethnicity,
                 measurements: measurements.isEmpty ? nil : measurements,
                 careerLength: careerLength.isEmpty ? nil : careerLength,
+                details: details.isEmpty ? nil : details,
                 rating100: rating > 0 ? Int(rating) : nil,
                 tagIds: tagIds.isEmpty ? nil : Array(tagIds)
             )
