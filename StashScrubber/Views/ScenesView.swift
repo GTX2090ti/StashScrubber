@@ -97,8 +97,6 @@ private struct SceneVisibleOffsetKey: PreferenceKey {
 struct ScenesView: View {
     @StateObject private var vm = SceneListViewModel()
     @EnvironmentObject private var settings: AppSettings
-    /// 父级切 tab 时的刷新信号：TabView 不销毁 View，需要靠这个触发重载
-    var refreshTick: Int = 0
     @AppStorage("scenes.viewMode") private var viewMode: String = "grid"   // grid=一排3个 / list=列表
     @State private var showFilter = false
     /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
@@ -135,12 +133,10 @@ struct ScenesView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接 / 生效地址变化时重新拉数据；切 tab 回来时只在列表为空才加载
-                    .task(id: settings.reloadKey + "|\(refreshTick)") {
-                        if vm.scenes.isEmpty {
-                            anchor.clear()
-                            await vm.reload()
-                        }
+                    // 连接或生效地址变化时重新拉数据
+                    .task(id: settings.reloadKey) {
+                        anchor.clear()
+                        await vm.reload()
                     }
                     .errorAlert($vm.error)
                     .toolbar {

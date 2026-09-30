@@ -80,27 +80,21 @@ struct RootView: View {
 
 struct TabRootView: View {
     @State private var selection: AppSection = .scenes
-    /// 每次切到列表 tab 时自增，强制各列表页重新加载（TabView 不销毁 View，task(id:) 不会重跑）
-    @State private var tabRefreshTick = 0
 
     var body: some View {
         TabView(selection: $selection) {
-            ScenesView(refreshTick: tabRefreshTick)
+            ScenesView()
                 .tabItem { Label("短片", systemImage: "film") }
                 .tag(AppSection.scenes)
-            PerformersView(refreshTick: tabRefreshTick)
+            PerformersView()
                 .tabItem { Label("演员", systemImage: "person.2") }
                 .tag(AppSection.performers)
-            StudiosView(refreshTick: tabRefreshTick)
+            StudiosView()
                 .tabItem { Label("工作室", systemImage: "building.2") }
                 .tag(AppSection.studios)
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(AppSection.settings)
-        }
-        .onChange(of: selection) { _ in
-            // 切到任何列表 tab 时刷新一次（首次进入也会触发，无害）
-            tabRefreshTick += 1
         }
     }
 }

@@ -83,7 +83,6 @@ private struct StudioVisibleOffsetKey: PreferenceKey {
 struct StudiosView: View {
     @StateObject private var vm = StudioListViewModel()
     @EnvironmentObject private var settings: AppSettings
-    var refreshTick: Int = 0
     /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
     @State private var path = NavigationPath()
     @State private var anchor = ScrollMemory()
@@ -118,12 +117,10 @@ struct StudiosView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接 / 生效地址变化时重新拉数据；切 tab 回来时只在列表为空才加载
-                    .task(id: settings.reloadKey + "|\(refreshTick)") {
-                        if vm.studios.isEmpty {
-                            anchor.clear()
-                            await vm.reload()
-                        }
+                    // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
+                    .task(id: settings.reloadKey) {
+                        anchor.clear()
+                        await vm.reload()
                     }
                     .errorAlert($vm.error)
                     .toolbar {
