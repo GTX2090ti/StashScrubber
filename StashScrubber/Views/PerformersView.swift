@@ -110,10 +110,12 @@ struct PerformersView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接或生效地址（内网↔外网自动兜底）变化时重新拉数据
+                    // 连接 / 生效地址变化时重新拉数据；切 tab 回来时只在列表为空才加载
                     .task(id: settings.reloadKey + "|\(refreshTick)") {
-                        anchor.clear()
-                        await vm.reload()
+                        if vm.performers.isEmpty {
+                            anchor.clear()
+                            await vm.reload()
+                        }
                     }
                     .errorAlert($vm.error)
                     .toolbar {
