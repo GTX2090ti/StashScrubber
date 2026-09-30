@@ -202,16 +202,9 @@ struct ScrapeSheet: View {
         }
     }
 
-    /// 加载中的提示文案（显示正在遍历几个源）
+    /// 加载中的提示文案
     private var loadingText: String {
-        switch mode {
-        case .fragment:
-            return fragmentSources.isEmpty ? "正在削刮…" : "正在从 \(fragmentSources.count) 个削刮源获取…"
-        case .query:
-            return querySources.isEmpty ? "正在削刮…" : "正在从 \(querySources.count) 个削刮源搜索…"
-        case .url:
-            return "正在削刮…"
-        }
+        "正在削刮…"
     }
 
     private func loadSources() async {
@@ -227,7 +220,7 @@ struct ScrapeSheet: View {
         }
     }
 
-    /// 自动遍历所有削刮源并发削刮，成功结果合并展示；单个源失败不阻塞其他源
+    /// 自动选用第一个可用削刮源直接削刮（不展示源列表、不多源合并）
     private func runAll(
         sources: [Source],
         scrapeOne: @escaping (GraphQLClient, Source) async throws -> [ScrapedItem]
@@ -237,43 +230,23 @@ struct ScrapeSheet: View {
         results = []
         defer { loading = false }
 
-        guard !sources.isEmpty else {
+        guard let src = sources.first else {
             error = "未找到可用削刮源，请先在 Stash 中配置刮削器或 Stash-box。"
             return
         }
         do {
             let client = try settings.makeClient()
-            var collected: [ScrapedItem] = []
-            var failures = 0
-            await withTaskGroup(of: Result<[ScrapedItem], Error>.self) { group in
-                for src in sources {
-                    group.addTask {
-                        do {
-                            return .success(try await scrapeOne(client, src))
-                        } catch {
-                            return .failure(error)
-                        }
-                    }
-                }
-                for await res in group {
-                    switch res {
-                    case .success(let items): collected.append(contentsOf: items)
-                    case .failure: failures += 1
-                    }
-                }
-            }
-            results = collected
-            if collected.isEmpty {
-                error = failures == sources.count
-                    ? "所有削刮源均失败，请查看 Stash 服务端日志或网络日志。"
-                    : "没有削刮到结果。"
+            let items = try await scrapeOne(client, src)
+            results = items
+            if items.isEmpty {
+                error = "没有削刮到结果。"
             }
         } catch {
             self.error = NetError.friendly(error)
         }
     }
 
-    /// 片段削刮：自动对所有支持片段削刮的本地刮削器并发执行
+    /// 片段削刮：自动用第一个支持片段削刮的本地刮削器直接削刮
     private func scrapeAllFragment() async {
         await runAll(sources: fragmentSources, scrapeOne: { client, src in
             switch kind {
@@ -287,7 +260,7 @@ struct ScrapeSheet: View {
         })
     }
 
-    /// 名称削刮：自动对所有削刮源（Stash-box + 本地刮削器）并发搜索
+    /// 名称削刮：自动用第一个削刮源（Stash-box 优先）直接搜索
     private func scrapeAllQuery() async {
         await runAll(sources: querySources, scrapeOne: { client, src in
             switch kind {
