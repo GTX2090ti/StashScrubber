@@ -15,7 +15,6 @@ struct StashScrubberApp: App {
         WindowGroup {
             RootGate()
                 .environmentObject(AppSettings.shared)
-                .environmentObject(WiFiAutoSwitch.shared)
                 .onChange(of: scenePhase) { phase in
                     defer { lastPhase = phase }
                     // 只有「从 .background 回到 .active」才重建会话
@@ -24,7 +23,6 @@ struct StashScrubberApp: App {
                     NetTransport.resetAPI(reason: "App 从后台回前台，重建 API 会话")
                     NetTransport.resetImage(reason: "App 从后台回前台，重建图片会话")
                     Task {
-                        await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
                         await AppSettings.shared.autoSelectSlot()
                     }
                 }
@@ -659,7 +657,6 @@ struct ServerSwitcherMenu: View {
 enum SettingsRoute: Hashable {
     case connectionDetail(UUID)
     case connectionConfig(UUID)
-    case wifiRules
     case diagnostics
     case netLog
 }
@@ -701,7 +698,6 @@ struct SettingsView: View {
                 switch route {
                 case .connectionDetail(let id): ConnectionDetailView(connectionID: id)
                 case .connectionConfig(let id): ConnectionConfigView(connectionID: id)
-                case .wifiRules: WiFiRulesView()
                 case .diagnostics: DiagnosticsView()
                 case .netLog: NetLogView()
                 }
@@ -757,9 +753,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var networkSection: some View {
         Section {
-            NavigationLink(value: SettingsRoute.wifiRules) {
-                Label("WiFi 自动切换", systemImage: "wifi")
-            }
             NavigationLink(value: SettingsRoute.diagnostics) {
                 Label("网络诊断", systemImage: "stethoscope")
             }
@@ -824,7 +817,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.30")
+            LabeledContent("版本", value: "1.5.31")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }

@@ -106,15 +106,6 @@ struct DiagnosticsView: View {
             }
 
             Section {
-                LabeledContent("规则开关", value: WiFiAutoSwitch.shared.enabled ? "开启" : "关闭")
-                LabeledContent("规则数", value: "\(WiFiAutoSwitch.shared.rules.count)")
-                LabeledContent("最近检测 SSID", value: WiFiAutoSwitch.shared.lastSSID ?? "无")
-                LabeledContent("最近动作", value: WiFiAutoSwitch.shared.lastAction ?? "无")
-            } header: {
-                Text("WiFi 规则状态")
-            }
-
-            Section {
                 Button {
                     Task { await runAll() }
                 } label: {
