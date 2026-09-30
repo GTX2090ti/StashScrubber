@@ -38,7 +38,7 @@ final class ScrollMemory: @unchecked Sendable {
     /// 基础恢复窗口（秒）：首次立即执行 + 按 0.06s 步进 ≈ 0.55s，
     /// 覆盖 push/pop 转场（约 0.35s）与 LazyVGrid 首帧渲染。
     /// 窗口内「锚点项没有上报」会被当作「还没渲染出来」而继续重试。
-    private static let recoverWindow: Double = 0.55
+    private static let recoverWindow: Double = 1.2
     /// 「已回到顶部」的容差（pt）
     private static let topTolerance: CGFloat = 3
 

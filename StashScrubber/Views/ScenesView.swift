@@ -211,7 +211,10 @@ struct ScenesView: View {
                     }
                     .onDisappear { anchor.freeze() }
                     .onAppear {
-                        anchor.restore(proxy) { id in vm.scenes.contains { $0.id == id } }
+                        // 延迟一帧等转场动画结束、ScrollView 重建完成
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            anchor.restore(proxy) { id in vm.scenes.contains { $0.id == id } }
+                        }
                     }
                     // 分页「加载更多」：请求期间冻结锚点、数据落地后守住位置 ——
                     // 追加数据会让 SwiftUI 重置偏移（表现：点一下「加载更多」就跳回最上面）

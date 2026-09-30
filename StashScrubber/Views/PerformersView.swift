@@ -146,7 +146,9 @@ struct PerformersView: View {
                     }
                     .onDisappear { anchor.freeze() }
                     .onAppear {
-                        anchor.restore(proxy) { id in vm.performers.contains { $0.id == id } }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            anchor.restore(proxy) { id in vm.performers.contains { $0.id == id } }
+                        }
                     }
                     // 分页「加载更多」：请求期间冻结锚点、数据落地后守住位置 ——
                     // 追加数据会让 SwiftUI 重置偏移（表现：点一下「加载更多」就跳回最上面）
