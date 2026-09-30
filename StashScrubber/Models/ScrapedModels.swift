@@ -47,21 +47,34 @@ struct ScrapedPerformer: Codable, Hashable {
     let storedId: String?
     let name: String?
     let disambiguation: String?
+    let aliases: String?
     let birthdate: String?
-    let details: String?
+    let gender: String?
     let country: String?
     let ethnicity: String?
+    let hairColor: String?
+    let eyeColor: String?
+    let height: Int?      // cm
+    let weight: Int?      // kg
     let measurements: String?
+    let fakeTits: String?
+    let tattoos: String?
+    let piercings: String?
     let careerStart: String?
     let careerEnd: String?
+    let details: String?
+    let rating100: Int?
     let urls: [String]?
     let images: [String]?
     let tags: [ScrapedTag]?
 
     enum CodingKeys: String, CodingKey {
-        case name, disambiguation, birthdate, details
-        case country, ethnicity, measurements, urls, images
+        case name, disambiguation, aliases, birthdate, gender, details
+        case country, ethnicity, measurements, fakeTits, tattoos, piercings
+        case urls, images, rating100
         case storedId = "stored_id"
+        case hairColor = "hair_color"
+        case eyeColor = "eye_color"
         case careerStart = "career_start"
         case careerEnd = "career_end"
         case tags

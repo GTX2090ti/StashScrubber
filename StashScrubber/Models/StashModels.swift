@@ -185,14 +185,24 @@ struct PerformerUpdateInput: Encodable {
     var id: String
     var name: String?
     var disambiguation: String?
+    var aliases: String?
     var birthdate: String?
-    var details: String?
+    var gender: String?
     var country: String?
     var ethnicity: String?
+    var hairColor: String?
+    var eyeColor: String?
+    var height: Int?      // cm
+    var weight: Int?      // kg
     var measurements: String?
+    var fakeTits: String?
+    var tattoos: String?
+    var piercings: String?
     var careerLength: String?
+    var details: String?
     var rating100: Int?
     var tagIds: [String]?
+    var urls: [String]?
     var image: String?   // base64 data URI
 }
 
@@ -201,13 +211,23 @@ struct PerformerUpdateInput: Encodable {
 struct PerformerCreateInput: Encodable {
     var name: String
     var disambiguation: String?
+    var aliases: String?
     var birthdate: String?
-    var details: String?
+    var gender: String?
     var country: String?
     var ethnicity: String?
+    var hairColor: String?
+    var eyeColor: String?
+    var height: Int?
+    var weight: Int?
     var measurements: String?
+    var fakeTits: String?
+    var tattoos: String?
+    var piercings: String?
     var careerLength: String?
+    var details: String?
     var rating100: Int?
     var tagIds: [String]?
+    var urls: [String]?
     var image: String?   // base64 data URI
 }

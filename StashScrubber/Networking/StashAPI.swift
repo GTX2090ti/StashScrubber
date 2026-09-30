@@ -291,8 +291,10 @@ enum StashAPI {
     """
 
     private static let scrapedPerformerSelection = """
-    stored_id name disambiguation birthdate details country ethnicity measurements
-    career_start career_end urls images
+    stored_id name disambiguation aliases birthdate gender
+    country ethnicity hair_color eye_color height weight
+    measurements fake_tits tattoos piercings
+    career_start career_end details rating100 urls images
     tags { stored_id name }
     """
 
@@ -565,13 +567,24 @@ enum StashAPI {
             var input = PerformerUpdateInput(id: targetID)
             if let v = p.name, !v.isEmpty { input.name = v; changed += 1 }
             if let v = p.disambiguation { input.disambiguation = v; changed += 1 }
+            if let v = p.aliases, !v.isEmpty { input.aliases = v; changed += 1 }
             if let v = p.birthdate { input.birthdate = v; changed += 1 }
+            if let v = p.gender, !v.isEmpty { input.gender = v; changed += 1 }
             if let v = p.details, !v.isEmpty { input.details = v; changed += 1 }
             if let v = p.country { input.country = v; changed += 1 }
             if let v = p.ethnicity { input.ethnicity = v; changed += 1 }
+            if let v = p.hairColor { input.hairColor = v; changed += 1 }
+            if let v = p.eyeColor { input.eyeColor = v; changed += 1 }
+            if let v = p.height { input.height = v; changed += 1 }
+            if let v = p.weight { input.weight = v; changed += 1 }
             if let v = p.measurements { input.measurements = v; changed += 1 }
+            if let v = p.fakeTits { input.fakeTits = v; changed += 1 }
+            if let v = p.tattoos { input.tattoos = v; changed += 1 }
+            if let v = p.piercings { input.piercings = v; changed += 1 }
             let career = [p.careerStart, p.careerEnd].compactMap { $0 }.joined(separator: " - ")
             if !career.isEmpty { input.careerLength = career; changed += 1 }
+            if let v = p.rating100, v > 0 { input.rating100 = v; changed += 1 }
+            if let us = p.urls, !us.isEmpty { input.urls = us; changed += 1 }
             if let ts = p.tags {
                 var ids: [String] = []
                 for t in ts { if let tid = try await resolveTagID(t) { ids.append(tid) } }
