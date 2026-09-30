@@ -210,11 +210,13 @@ struct PerformerEditView: View {
                     TextField("族裔", text: $ethnicity)
                     TextField("三围", text: $measurements)
                     TextField("从业年限（如 2015-2020）", text: $careerLength)
-                    TextEditor(text: $details)
-                        .frame(minHeight: 80)
                 }
                 Section {
                     MultiSelectPicker(title: "标签", options: taxonomy.tags, selection: $tagIds)
+                }
+                Section("简介") {
+                    TextEditor(text: $details)
+                        .frame(minHeight: 100)
                 }
             }
             .navigationTitle("编辑演员")
@@ -317,11 +319,13 @@ struct PerformerCreateView: View {
                     TextField("族裔", text: $ethnicity)
                     TextField("三围", text: $measurements)
                     TextField("从业年限（如 2015-2020）", text: $careerLength)
-                    TextEditor(text: $details)
-                        .frame(minHeight: 80)
                 }
                 Section {
                     MultiSelectPicker(title: "标签", options: taxonomy.tags, selection: $tagIds)
+                }
+                Section("简介") {
+                    TextEditor(text: $details)
+                        .frame(minHeight: 100)
                 }
             }
             .navigationTitle("添加演员")
