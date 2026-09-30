@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 网络核心（统一收口）
 //
-// 本文件把此前分散在 GraphQLClient / WiFiAutoSwitch / DiagnosticsView / RemoteImageView
+// 本文件把此前分散在 GraphQLClient / DiagnosticsView / RemoteImageView
 // 中的四类重复逻辑收口为单一实现：
 //   1. 端点解析与图片地址重写       → StashEndpoint
 //   2. 错误人话翻译                → NetError

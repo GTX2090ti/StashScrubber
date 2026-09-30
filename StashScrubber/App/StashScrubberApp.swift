@@ -375,6 +375,9 @@ final class AppSettings: ObservableObject {
         activeConnectionID = id
         unpin()
         activeSlot = activeConnection?.preferredSlot ?? .lan
+        // 切换服务器后立即重建会话，避免旧连接池吊死请求
+        NetTransport.resetAPI(reason: "切换到\(activeConnection?.name ?? "新连接")，重建 API 会话")
+        NetTransport.resetImage(reason: "切换到\(activeConnection?.name ?? "新连接")，重建图片会话")
         Task { await autoSelectSlot(force: true) }
     }
 
@@ -817,7 +820,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.31")
+            LabeledContent("版本", value: "1.5.32")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }
