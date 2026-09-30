@@ -11,8 +11,7 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
-      manual:
-        enabled: true
+      manual: true
     scripts:
       - name: Install XcodeGen
         script: brew install xcodegen
