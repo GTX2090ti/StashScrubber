@@ -71,7 +71,7 @@ struct ScrapedPerformer: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case name, disambiguation, aliases, birthdate, gender, details
         case country, ethnicity, measurements, fakeTits, tattoos, piercings
-        case urls, images, rating100
+        case height, weight, urls, images, rating100
         case storedId = "stored_id"
         case hairColor = "hair_color"
         case eyeColor = "eye_color"
