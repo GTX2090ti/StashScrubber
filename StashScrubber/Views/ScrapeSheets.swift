@@ -79,7 +79,12 @@ struct ScrapeSheet: View {
                             ForEach(availableModes) { Text($0.rawValue).tag($0) }
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: mode) { _ in results = [] }
+                        .onChange(of: mode) { newMode in
+                            results = []
+                            error = nil
+                            // 切回片段方式时自动重新削刮
+                            if newMode == .fragment { Task { await scrapeAllFragment() } }
+                        }
                     } header: {
                         Text("削刮\(kind.title)")
                     }
@@ -87,28 +92,21 @@ struct ScrapeSheet: View {
 
                 switch mode {
                 case .fragment:
-                    sourceSection(
-                        fragmentSources,
-                        header: "选择刮削器（按当前信息削刮）",
-                        emptyText: fragmentSources.isEmpty ? "服务端未返回支持片段削刮的本地刮削器" : nil,
-                        footer: "以当前条目的已有字段作为片段上下文发给刮削器。",
-                        needsQueryText: false
-                    ) { src in
-                        Task { await scrapeFragment(with: src) }
-                    }
+                    // 片段削刮：不再显示刮削器列表，自动对所有支持片段削刮的源并发削刮
+                    EmptyView()
 
                 case .query:
                     Section {
                         TextField("输入\(kind.title)名称关键词", text: $queryText)
-                    }
-                    sourceSection(
-                        querySources,
-                        header: "选择削刮源（按名称搜索）",
-                        emptyText: querySources.isEmpty ? "未找到可用削刮源（无 Stash-box 且无本地刮削器）" : nil,
-                        footer: "Stash-box（StashDB / ThePornDB 等）按名称全局搜索；本地刮削器需声明支持名称削刮。",
-                        needsQueryText: true
-                    ) { src in
-                        Task { await scrapeQuery(with: src) }
+                            .onSubmit { Task { await scrapeAllQuery() } }
+                        Button {
+                            Task { await scrapeAllQuery() }
+                        } label: {
+                            Label("开始削刮（自动遍历所有削刮源）", systemImage: "sparkle.magnifyingglass")
+                        }
+                        .disabled(queryText.isEmpty || loading)
+                    } footer: {
+                        Text("自动对 Stash-box 与所有支持名称削刮的本地刮削器并发搜索，结果合并展示。")
                     }
 
                 case .url:
@@ -132,7 +130,7 @@ struct ScrapeSheet: View {
                     Section {
                         HStack {
                             ProgressView().padding(.trailing, 8)
-                            Text("正在削刮…")
+                            Text(loadingText)
                         }
                     }
                 }
@@ -172,9 +170,22 @@ struct ScrapeSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
                 }
+                if mode == .fragment, !results.isEmpty, !loading {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            Task { await scrapeAllFragment() }
+                        } label: {
+                            Label("重新削刮", systemImage: "arrow.clockwise")
+                        }
+                    }
+                }
             }
             .onAppear { mode = availableModes.contains(mode) ? mode : availableModes[0] }
-            .task { await loadSources() }
+            .task {
+                await loadSources()
+                // 面板打开即自动开始片段削刮，不再让用户先选刮削器
+                if mode == .fragment { await scrapeAllFragment() }
+            }
             .errorAlert($error)
             .sheet(item: $picked) { item in
                 ScrapePreview(
@@ -191,40 +202,15 @@ struct ScrapeSheet: View {
         }
     }
 
-    private func sourceSection(
-        _ sources: [Source],
-        header: String,
-        emptyText: String?,
-        footer: String,
-        needsQueryText: Bool,
-        action: @escaping (Source) -> Void
-    ) -> some View {
-        Section {
-            if let emptyText, !loading {
-                Text(emptyText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(sources) { src in
-                Button {
-                    action(src)
-                } label: {
-                    HStack {
-                        Text(src.name)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Spacer()
-                        Text("削刮")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-                .disabled(loading || (needsQueryText && queryText.isEmpty))
-            }
-        } header: {
-            Text(header)
-        } footer: {
-            Text(footer)
+    /// 加载中的提示文案（显示正在遍历几个源）
+    private var loadingText: String {
+        switch mode {
+        case .fragment:
+            return fragmentSources.isEmpty ? "正在削刮…" : "正在从 \(fragmentSources.count) 个削刮源获取…"
+        case .query:
+            return querySources.isEmpty ? "正在削刮…" : "正在从 \(querySources.count) 个削刮源搜索…"
+        case .url:
+            return "正在削刮…"
         }
     }
 
@@ -241,25 +227,55 @@ struct ScrapeSheet: View {
         }
     }
 
-    private func run(_ body: (GraphQLClient) async throws -> [ScrapedItem]) async {
+    /// 自动遍历所有削刮源并发削刮，成功结果合并展示；单个源失败不阻塞其他源
+    private func runAll(
+        sources: [Source],
+        scrapeOne: @escaping (GraphQLClient, Source) async throws -> [ScrapedItem]
+    ) async {
         loading = true
         error = nil
         results = []
         defer { loading = false }
+
+        guard !sources.isEmpty else {
+            error = "未找到可用削刮源，请先在 Stash 中配置刮削器或 Stash-box。"
+            return
+        }
         do {
             let client = try settings.makeClient()
-            let items = try await body(client)
-            results = items
-            if items.isEmpty {
-                error = "没有削刮到结果。可换一个削刮源重试，或确认服务端刮削器可用（查看 Stash 日志）。"
+            var collected: [ScrapedItem] = []
+            var failures = 0
+            await withTaskGroup(of: Result<[ScrapedItem], Error>.self) { group in
+                for src in sources {
+                    group.addTask {
+                        do {
+                            return .success(try await scrapeOne(client, src))
+                        } catch {
+                            return .failure(error)
+                        }
+                    }
+                }
+                for await res in group {
+                    switch res {
+                    case .success(let items): collected.append(contentsOf: items)
+                    case .failure: failures += 1
+                    }
+                }
+            }
+            results = collected
+            if collected.isEmpty {
+                error = failures == sources.count
+                    ? "所有削刮源均失败，请查看 Stash 服务端日志或网络日志。"
+                    : "没有削刮到结果。"
             }
         } catch {
             self.error = NetError.friendly(error)
         }
     }
 
-    private func scrapeFragment(with src: Source) async {
-        await run { client in
+    /// 片段削刮：自动对所有支持片段削刮的本地刮削器并发执行
+    private func scrapeAllFragment() async {
+        await runAll(sources: fragmentSources, scrapeOne: { client, src in
             switch kind {
             case .scene:
                 return try await StashAPI.scrapeSceneFragment(client, source: src.dict, sceneId: targetID)
@@ -268,11 +284,12 @@ struct ScrapeSheet: View {
                 return try await StashAPI.scrapePerformerFragment(client, source: src.dict, performerId: targetID)
                     .map { ScrapedItem.performer($0) }
             }
-        }
+        })
     }
 
-    private func scrapeQuery(with src: Source) async {
-        await run { client in
+    /// 名称削刮：自动对所有削刮源（Stash-box + 本地刮削器）并发搜索
+    private func scrapeAllQuery() async {
+        await runAll(sources: querySources, scrapeOne: { client, src in
             switch kind {
             case .scene:
                 return try await StashAPI.scrapeSceneByName(client, source: src.dict, query: queryText)
@@ -281,17 +298,29 @@ struct ScrapeSheet: View {
                 return try await StashAPI.scrapePerformerByName(client, source: src.dict, query: queryText)
                     .map { ScrapedItem.performer($0) }
             }
-        }
+        })
     }
 
     private func scrapeURL() async {
-        await run { client in
+        loading = true
+        error = nil
+        results = []
+        defer { loading = false }
+        do {
+            let client = try settings.makeClient()
+            let items: [ScrapedItem]
             switch kind {
             case .scene:
-                return try await StashAPI.scrapeSceneURL(client, url: urlText).map { ScrapedItem.scene($0) }
+                items = try await StashAPI.scrapeSceneURL(client, url: urlText).map { ScrapedItem.scene($0) }
             case .performer:
-                return try await StashAPI.scrapePerformerURL(client, url: urlText).map { ScrapedItem.performer($0) }
+                items = try await StashAPI.scrapePerformerURL(client, url: urlText).map { ScrapedItem.performer($0) }
             }
+            results = items
+            if items.isEmpty {
+                error = "没有削刮到结果。"
+            }
+        } catch {
+            self.error = NetError.friendly(error)
         }
     }
 }
