@@ -11,8 +11,8 @@ struct StashScrubberApp: App {
     /// 此时连接还活着，盲目重建会让会话抖动、日志刷屏）
     @State private var lastPhase: ScenePhase = .active
 
-    /// 网络接口变化监听（WiFi ↔ 流量）：只重建会话丢弃死连接，不做地址切换
-    private let pathWatcher = NetPathWatcher()
+    /// 网络接口变化监听（WiFi ↔ 流量）：重建会话丢弃死连接，并触发重新选路
+    private let pathWatcher = NetPathWatcher.shared
 
     var body: some SwiftUI.Scene {
         WindowGroup {
@@ -228,6 +228,13 @@ final class AppSettings: ObservableObject {
                 await self?.recoverFromFailure(reason)
             }
         }
+
+        // 网络接口变化（WiFi ↔ 流量）→ 重新选路：流量下直接避开内网地址
+        NetPathWatcher.shared.onInterfaceChange = { [weak self] in
+            Task { @MainActor in
+                await self?.autoSelectSlot(force: true)
+            }
+        }
     }
 
     // MARK: 默认值 / 迁移
@@ -337,6 +344,10 @@ final class AppSettings: ObservableObject {
         }
         guard let url = c.url(for: activeSlot) ?? c.canonicalProfile?.url, !url.isEmpty else {
             throw StashAPIError.badURL("「\(c.name)」未配置可用地址，请在 设置 → 服务器连接 中填写内网或外网地址")
+        }
+        // 流量网络 + 生效地址是内网 + 连接没有外网地址 → 立即给出明确错误，不干转圈
+        if NetPathWatcher.currentIsCellular, StashEndpoint.isLAN(url), !(c.hasWAN) {
+            throw StashAPIError.badURL("当前是流量网络，访问不了内网地址 \(url)。请连接家庭 Wi-Fi，或在 设置 → 服务器连接 中配置外网地址后手动切换到外网")
         }
         return try GraphQLClient(baseURL: url, apiKey: c.apiKey, profileName: c.name)
     }
@@ -480,13 +491,21 @@ final class AppSettings: ObservableObject {
         if let pin = pinnedSlot, !slots.contains(pin) { unpin() }
 
         // 1) 期望槽位：单侧配置 > WiFi 规则锁定 > 优先内网
-        let target: AddressSlot
+        var target: AddressSlot
         if slots.count == 1 {
             target = slots[0]
         } else if let pin = pinnedSlot, slots.contains(pin) {
             target = pin
         } else {
             target = c.preferredSlot ?? slots[0]
+        }
+
+        // 2) 流量网络适配：纯流量下内网地址必然不可达（运营商网络里没有局域网 IP），
+        //    未手动锁定时直接改走外网，省掉一次注定失败的内网实测（白等 10 秒超时）。
+        if NetPathWatcher.currentIsCellular, target == .lan, c.hasWAN, pinnedSlot == nil {
+            apply(slot: .wan, reason: "当前为流量网络，自动改用外网地址")
+            markSynced()
+            return
         }
 
         // 2) 实测优先地址
@@ -831,7 +850,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.43")
+            LabeledContent("版本", value: "1.5.44")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }

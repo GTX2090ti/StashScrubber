@@ -760,24 +760,48 @@ final class NetLog: ObservableObject, @unchecked Sendable {
 // 让下一个请求直接走新连接，不用再等 10s 硬超时兜底。
 
 final class NetPathWatcher {
+    /// 单例：App 结构体重建不会重复启动 NWPathMonitor
+    static let shared = NetPathWatcher()
+
+    /// 网络接口变化时的回调（主线程调用）：AppSettings 用来重新选路
+    var onInterfaceChange: (() -> Void)?
+
     private let monitor = NWPathMonitor()
     private let lock = NSLock()
     private var lastSignature = ""
 
-    init() {
+    /// 当前是否为「纯流量」网络（没同时连 WiFi）——流量下内网地址必失败，选路要避开
+    private static let stateLock = NSLock()
+    private static var _isCellular = false
+    static var currentIsCellular: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isCellular
+    }
+
+    private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             let sig = Self.signature(path)
+            Self.stateLock.lock()
+            Self._isCellular = path.usesInterfaceType(.cellular) && !path.usesInterfaceType(.wifi)
+            Self.stateLock.unlock()
+
             self.lock.lock()
             let old = self.lastSignature
             let first = old.isEmpty
             self.lastSignature = sig
             self.lock.unlock()
+
             // 首次回调只是建立基线，不重建
             guard !first, sig != old else { return }
             NetTransport.resetAPI(reason: "网络接口变化（\(old) → \(sig)），丢弃死连接")
             NetTransport.resetImage(reason: "网络接口变化，重建图片会话")
             NetTransport.resetProbe(reason: "网络接口变化，重建探测会话")
+            // 网络类型变了：让 AppSettings 重新选路（流量 → 外网，WiFi → 优先内网）
+            DispatchQueue.main.async { [weak self] in
+                self?.onInterfaceChange?()
+            }
         }
         monitor.start(queue: .global(qos: .utility))
     }

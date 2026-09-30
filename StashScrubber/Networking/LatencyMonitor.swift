@@ -157,7 +157,9 @@ final class LatencyMonitor: ObservableObject, @unchecked Sendable {
         }
         if !force {
             let existing = state(for: url)
-            if existing.isReachable || existing == .probing, !isStale(url) { return existing }
+            // 只有「明确可达」的成果才能直接复用；「测速中」不能返回，
+            // 否则选路会把它当成「结果未知」而继续用旧地址（出差时被钉在内网上转圈）。
+            if existing.isReachable, !isStale(url) { return existing }
         }
         guard beginFlight(url) else {
             // 同一地址已有探测在跑：等它出结果再返回，避免调用方拿到「测速中」而误判为不可达
