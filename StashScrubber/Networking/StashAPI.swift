@@ -294,7 +294,7 @@ enum StashAPI {
     stored_id name disambiguation aliases birthdate gender
     country ethnicity hair_color eye_color height weight
     measurements fake_tits tattoos piercings
-    career_start career_end details rating100 urls images
+    career_start career_end details urls images
     tags { stored_id name }
     """
 
