@@ -6,6 +6,10 @@ import SwiftUI
 struct StashScrubberApp: App {
     // 注意：模块内自定义的 Scene 模型结构体会遮蔽 SwiftUI.Scene 协议，此处须全限定
     @Environment(\.scenePhase) private var scenePhase
+    /// 记录上一次 scenePhase，用于区分「真正从后台回前台」vs「被短暂打断后回到 active」
+    /// （下拉控制中心 / 通知横幅 / Face ID 弹窗会让 active→inactive→active，App 并未进后台，
+    /// 此时连接还活着，盲目重建会让会话抖动、日志刷屏）
+    @State private var lastPhase: ScenePhase = .active
 
     var body: some SwiftUI.Scene {
         WindowGroup {
@@ -13,16 +17,15 @@ struct StashScrubberApp: App {
                 .environmentObject(AppSettings.shared)
                 .environmentObject(WiFiAutoSwitch.shared)
                 .onChange(of: scenePhase) { phase in
-                    if phase == .active {
-                        // 回到前台：先丢弃后台期间可能已失效的 keep-alive 连接（不重建的话
-                        // 第一次请求会撞到死连接，表现为「放一会儿就连不上」），再做选路
-                        NetTransport.resetAPI(reason: "App 回到前台，重建 API 会话")
-                        NetTransport.resetImage(reason: "App 回到前台，重建图片会话")
-                        Task {
-                            // 回到前台：先按 WiFi 规则（如有）锁定/切换，再做一次内网优先选路
-                            await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
-                            await AppSettings.shared.autoSelectSlot()
-                        }
+                    defer { lastPhase = phase }
+                    // 只有「从 .background 回到 .active」才重建会话
+                    // （.inactive → .active 是控制中心/通知等短暂打断，连接未断，不重建）
+                    guard phase == .active, lastPhase == .background else { return }
+                    NetTransport.resetAPI(reason: "App 从后台回前台，重建 API 会话")
+                    NetTransport.resetImage(reason: "App 从后台回前台，重建图片会话")
+                    Task {
+                        await WiFiAutoSwitch.shared.checkAndSwitch(settings: .shared)
+                        await AppSettings.shared.autoSelectSlot()
                     }
                 }
         }
