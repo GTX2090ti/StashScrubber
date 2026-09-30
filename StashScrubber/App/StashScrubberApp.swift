@@ -80,21 +80,25 @@ struct RootView: View {
 
 struct TabRootView: View {
     @State private var selection: AppSection = .scenes
+    @State private var tabRefreshTick = 0
 
     var body: some View {
         TabView(selection: $selection) {
-            ScenesView()
+            ScenesView(refreshTick: tabRefreshTick)
                 .tabItem { Label("短片", systemImage: "film") }
                 .tag(AppSection.scenes)
-            PerformersView()
+            PerformersView(refreshTick: tabRefreshTick)
                 .tabItem { Label("演员", systemImage: "person.2") }
                 .tag(AppSection.performers)
-            StudiosView()
+            StudiosView(refreshTick: tabRefreshTick)
                 .tabItem { Label("工作室", systemImage: "building.2") }
                 .tag(AppSection.studios)
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(AppSection.settings)
+        }
+        .onChange(of: selection) { _ in
+            tabRefreshTick += 1
         }
     }
 }
@@ -824,7 +828,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.37")
+            LabeledContent("版本", value: "1.5.38")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }

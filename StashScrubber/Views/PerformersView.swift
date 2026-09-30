@@ -82,6 +82,7 @@ private struct PerformerVisibleOffsetKey: PreferenceKey {
 struct PerformersView: View {
     @StateObject private var vm = PerformerListViewModel()
     @EnvironmentObject private var settings: AppSettings
+    var refreshTick: Int = 0
     /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
     @State private var path = NavigationPath()
     @State private var anchor = ScrollMemory()
@@ -109,10 +110,12 @@ struct PerformersView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接或生效地址变化时重新拉数据
-                    .task(id: settings.reloadKey) {
-                        anchor.clear()
-                        await vm.reload()
+                    // 连接 / 生效地址 / 切 tab 变化时重新拉数据；有数据时不刷新
+                    .task(id: settings.reloadKey + "|\(refreshTick)") {
+                        if vm.performers.isEmpty {
+                            anchor.clear()
+                            await vm.reload()
+                        }
                     }
                     .errorAlert($vm.error)
                     .toolbar {
