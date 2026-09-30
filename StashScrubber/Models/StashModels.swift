@@ -195,3 +195,19 @@ struct PerformerUpdateInput: Encodable {
     var tagIds: [String]?
     var image: String?   // base64 data URI
 }
+
+/// 手动创建演员的输入：字段与 PerformerUpdateInput 一致，不含 id
+/// （Stash 的 PerformerCreateInput 支持相同字段，snakeCase 由 jsonDict 统一转换）
+struct PerformerCreateInput: Encodable {
+    var name: String
+    var disambiguation: String?
+    var birthdate: String?
+    var details: String?
+    var country: String?
+    var ethnicity: String?
+    var measurements: String?
+    var careerLength: String?
+    var rating100: Int?
+    var tagIds: [String]?
+    var image: String?   // base64 data URI
+}

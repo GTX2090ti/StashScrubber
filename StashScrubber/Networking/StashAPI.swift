@@ -433,14 +433,20 @@ enum StashAPI {
 
     // MARK: 实体创建（削刮结果中出现库里没有的 演员/标签/工作室 时调用）
 
-    static func createPerformer(_ c: GraphQLClient, name: String) async throws -> String {
+    /// 完整创建演员：手动添加功能使用，写入表单里填写的全部字段
+    static func createPerformer(_ c: GraphQLClient, input: PerformerCreateInput) async throws -> String {
         struct R: Decodable { let performerCreate: IDOnly }
         struct IDOnly: Decodable { let id: String }
         let r: R = try await c.send(
             "mutation CreatePerformer($input: PerformerCreateInput!) { performerCreate(input: $input) { id } }",
-            variables: ["input": ["name": name]], as: R.self
+            variables: ["input": try jsonDict(input)], as: R.self
         )
         return r.performerCreate.id
+    }
+
+    /// 轻量创建演员：削刮结果自动创建时只写名称
+    static func createPerformer(_ c: GraphQLClient, name: String) async throws -> String {
+        try await createPerformer(c, input: PerformerCreateInput(name: name))
     }
 
     static func createTag(_ c: GraphQLClient, name: String) async throws -> String {

@@ -85,6 +85,8 @@ struct PerformersView: View {
     /// 显式导航路径：用于感知「从详情返回列表根」，从而恢复滚动位置
     @State private var path = NavigationPath()
     @State private var anchor = ScrollMemory()
+    /// 手动添加演员表单
+    @State private var showCreate = false
 
     /// 滚动容器坐标空间名（用于取各卡片相对滚动内容的纵坐标）
     private static let scrollSpace = "performers.scroll"
@@ -115,6 +117,19 @@ struct PerformersView: View {
                     .errorAlert($vm.error)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                showCreate = true
+                            } label: {
+                                Label("添加演员", systemImage: "person.badge.plus")
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $showCreate) {
+                        PerformerCreateView {
+                            anchor.clear()
+                            Task { await vm.reload() }
+                        }
                     }
                     // 从详情页返回列表根：滚回进入前的位置。
                     // （proxy 只存在于 ScrollViewReader 闭包内，这些修饰符必须写在闭包内部）

@@ -252,3 +252,103 @@ struct PerformerEditView: View {
         }
     }
 }
+
+// MARK: - 手动添加演员
+
+struct PerformerCreateView: View {
+    var onSaved: () -> Void
+
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var taxonomy = TaxonomyStore()
+
+    @State private var name = ""
+    @State private var disambiguation = ""
+    @State private var birthdate = ""
+    @State private var country = ""
+    @State private var ethnicity = ""
+    @State private var measurements = ""
+    @State private var careerLength = ""
+    @State private var details = ""
+    @State private var rating: Double = 0
+    @State private var tagIds: Set<String> = []
+    @State private var saving = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("基本信息") {
+                    TextField("名称（必填）", text: $name)
+                    TextField("区别名", text: $disambiguation)
+                    TextField("出生日期（yyyy-MM-dd）", text: $birthdate)
+                        .keyboardType(.numbersAndPunctuation)
+                    TextField("国籍", text: $country)
+                    HStack {
+                        Text("评分")
+                        Spacer()
+                        Text(rating > 0 ? String(format: "%.1f / 5.0", rating / 20) : "未评分")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $rating, in: 0...100, step: 5)
+                }
+                Section("档案") {
+                    TextField("族裔", text: $ethnicity)
+                    TextField("三围", text: $measurements)
+                    TextField("从业年限（如 2015-2020）", text: $careerLength)
+                    TextEditor(text: $details)
+                        .frame(minHeight: 80)
+                }
+                Section {
+                    MultiSelectPicker(title: "标签", options: taxonomy.tags, selection: $tagIds)
+                }
+            }
+            .navigationTitle("添加演员")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if saving { ProgressView() } else { Button("保存") { Task { await save() } } }
+                }
+            }
+            .task {
+                if let client = try? settings.makeClient() {
+                    await taxonomy.load(client: client)
+                }
+            }
+            .errorAlert($error)
+        }
+    }
+
+    private func save() async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            error = "演员名称不能为空"
+            return
+        }
+        saving = true
+        defer { saving = false }
+        do {
+            let client = try settings.makeClient()
+            let input = PerformerCreateInput(
+                name: trimmed,
+                disambiguation: disambiguation.isEmpty ? nil : disambiguation,
+                birthdate: birthdate.isEmpty ? nil : birthdate,
+                details: details.isEmpty ? nil : details,
+                country: country.isEmpty ? nil : country,
+                ethnicity: ethnicity.isEmpty ? nil : ethnicity,
+                measurements: measurements.isEmpty ? nil : measurements,
+                careerLength: careerLength.isEmpty ? nil : careerLength,
+                rating100: rating > 0 ? Int(rating) : nil,
+                tagIds: tagIds.isEmpty ? nil : Array(tagIds)
+            )
+            _ = try await StashAPI.createPerformer(client, input: input)
+            onSaved()
+            dismiss()
+        } catch {
+            self.error = NetError.friendly(error)
+        }
+    }
+}
