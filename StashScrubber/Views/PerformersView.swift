@@ -126,7 +126,7 @@ struct PerformersView: View {
                         }
                     }
                     .sheet(isPresented: $showCreate) {
-                        PerformerCreateView {
+                        PerformerCreateView { _ in
                             anchor.clear()
                             Task { await vm.reload() }
                         }

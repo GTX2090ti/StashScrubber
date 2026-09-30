@@ -284,6 +284,8 @@ struct MultiSelectPicker: View {
     let title: String
     let options: [NamedOption]
     @Binding var selection: Set<String>
+    /// 可选「添加新条目」入口（如演员选择弹窗里新建演员）
+    var onAdd: (() -> Void)? = nil
     @State private var showSheet = false
 
     var body: some View {
@@ -302,7 +304,7 @@ struct MultiSelectPicker: View {
             }
         }
         .sheet(isPresented: $showSheet) {
-            MultiSelectSheet(title: title, options: options, selection: $selection)
+            MultiSelectSheet(title: title, options: options, selection: $selection, onAdd: onAdd)
         }
     }
 }
@@ -311,6 +313,7 @@ struct MultiSelectSheet: View {
     let title: String
     let options: [NamedOption]
     @Binding var selection: Set<String>
+    var onAdd: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
 
@@ -321,6 +324,16 @@ struct MultiSelectSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if let onAdd {
+                    Section {
+                        Button {
+                            onAdd()
+                        } label: {
+                            Label("添加\(title)", systemImage: "person.badge.plus")
+                                .foregroundStyle(Color.appAccent)
+                        }
+                    }
+                }
                 ForEach(filtered) { opt in
                     Button {
                         if selection.contains(opt.id) { selection.remove(opt.id) }

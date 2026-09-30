@@ -42,6 +42,7 @@ struct SceneEditView: View {
     @State private var urlsText = ""
     @State private var saving = false
     @State private var error: String?
+    @State private var showCreatePerformer = false
 
     var body: some View {
         NavigationStack {
@@ -73,7 +74,9 @@ struct SceneEditView: View {
                     }
                 }
                 Section {
-                    MultiSelectPicker(title: "演员", options: taxonomy.performers, selection: $performerIds)
+                    MultiSelectPicker(title: "演员", options: taxonomy.performers, selection: $performerIds) {
+                        showCreatePerformer = true
+                    }
                 }
                 Section {
                     TextEditor(text: $urlsText)
@@ -120,6 +123,17 @@ struct SceneEditView: View {
                 }
             }
             .errorAlert($error)
+            .sheet(isPresented: $showCreatePerformer) {
+                PerformerCreateView { newID in
+                    // 新建演员后自动选中，并刷新 taxonomy 让新演员出现在列表里
+                    performerIds.insert(newID)
+                    Task {
+                        if let client = try? settings.makeClient() {
+                            await taxonomy.load(client: client)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -262,7 +276,8 @@ struct PerformerEditView: View {
 // MARK: - 手动添加演员
 
 struct PerformerCreateView: View {
-    var onSaved: () -> Void
+    /// 保存成功回调，参数为新建演员的 id
+    var onSaved: (String) -> Void
 
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
@@ -350,8 +365,8 @@ struct PerformerCreateView: View {
                 rating100: rating > 0 ? Int(rating) : nil,
                 tagIds: tagIds.isEmpty ? nil : Array(tagIds)
             )
-            _ = try await StashAPI.createPerformer(client, input: input)
-            onSaved()
+            let newID = try await StashAPI.createPerformer(client, input: input)
+            onSaved(newID)
             dismiss()
         } catch {
             self.error = NetError.friendly(error)
