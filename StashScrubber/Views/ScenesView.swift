@@ -628,12 +628,6 @@ struct SceneDetailView: View {
                 }
             }
 
-            if let ds = s.details, !ds.isEmpty {
-                Text(ds)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
             if let ps = s.performers, !ps.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("演员").font(.subheadline.weight(.semibold))
@@ -672,6 +666,12 @@ struct SceneDetailView: View {
                         }
                     }
                 }
+            }
+            if let ds = s.details, !ds.isEmpty {
+                Text(ds)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
     }
