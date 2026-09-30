@@ -110,12 +110,10 @@ struct PerformersView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接 / 生效地址 / 切 tab 变化时重新拉数据；有数据时不刷新
+                    // 连接 / 生效地址 / 切 tab 变化时重新拉数据
                     .task(id: settings.reloadKey + "|\(refreshTick)") {
-                        if vm.performers.isEmpty {
-                            anchor.clear()
-                            await vm.reload()
-                        }
+                        anchor.clear()
+                        await vm.reload()
                     }
                     .errorAlert($vm.error)
                     .toolbar {

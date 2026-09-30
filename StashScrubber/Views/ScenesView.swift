@@ -133,12 +133,10 @@ struct ScenesView: View {
                         anchor.clear()
                         await vm.reload()
                     }
-                    // 连接 / 生效地址 / 切 tab 变化时重新拉数据；有数据时不刷新（保持滚动位置）
+                    // 连接 / 生效地址 / 切 tab 变化时重新拉数据
                     .task(id: settings.reloadKey + "|\(refreshTick)") {
-                        if vm.scenes.isEmpty {
-                            anchor.clear()
-                            await vm.reload()
-                        }
+                        anchor.clear()
+                        await vm.reload()
                     }
                     .errorAlert($vm.error)
                     .toolbar {

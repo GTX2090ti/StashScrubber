@@ -828,7 +828,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.39")
+            LabeledContent("版本", value: "1.5.40")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }
