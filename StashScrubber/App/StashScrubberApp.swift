@@ -98,7 +98,7 @@ struct TabRootView: View {
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(AppSection.settings)
         }
-        .onChange(of: selection) { newValue in
+        .onChange(of: selection) { _ in
             // 切到任何列表 tab 时刷新一次（首次进入也会触发，无害）
             tabRefreshTick += 1
         }
