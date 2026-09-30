@@ -185,7 +185,6 @@ struct PerformerUpdateInput: Encodable {
     var id: String
     var name: String?
     var disambiguation: String?
-    var aliases: String?
     var birthdate: String?
     var gender: String?
     var country: String?
@@ -211,7 +210,6 @@ struct PerformerUpdateInput: Encodable {
 struct PerformerCreateInput: Encodable {
     var name: String
     var disambiguation: String?
-    var aliases: String?
     var birthdate: String?
     var gender: String?
     var country: String?

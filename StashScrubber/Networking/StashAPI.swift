@@ -567,7 +567,6 @@ enum StashAPI {
             var input = PerformerUpdateInput(id: targetID)
             if let v = p.name, !v.isEmpty { input.name = v; changed += 1 }
             if let v = p.disambiguation { input.disambiguation = v; changed += 1 }
-            if let v = p.aliases, !v.isEmpty { input.aliases = v; changed += 1 }
             if let v = p.birthdate { input.birthdate = v; changed += 1 }
             if let v = p.gender, !v.isEmpty { input.gender = v; changed += 1 }
             if let v = p.details, !v.isEmpty { input.details = v; changed += 1 }
