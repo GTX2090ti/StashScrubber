@@ -539,6 +539,10 @@ final class AppSettings: ObservableObject {
     /// 触发频率由 NetHealth 的阈值（连续 2 次）与冷却（20 秒）控制，不会来回抖动。
     func recoverFromFailure(_ reason: String) async {
         guard let c = activeConnection else { return }
+        // 先清掉半死连接池：数据流量下基站切换会让 TCP 连接半死，
+        // 不重建会话的话切地址也没用——新请求还是卡在旧连接上
+        NetTransport.resetAPI(reason: "连续失败（\(reason)），重建 API 会话")
+        NetTransport.resetImage(reason: "连续失败（\(reason)），重建图片会话")
         // 只配了一侧地址：没有可切换的目标，仅刷新一次可达性供 UI 显示
         guard c.availableSlots.count > 1 else {
             if let u = c.url(for: activeSlot) {
@@ -820,7 +824,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.32")
+            LabeledContent("版本", value: "1.5.33")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }
