@@ -16,7 +16,7 @@ final class StudioListViewModel: ObservableObject {
 
     private var lastQuery = ""
     private var generation = 0
-    static let watchdogSeconds: Double = 30
+    static let watchdogSeconds: Double = 15
 
     var totalPages: Int { max(1, Int(ceil(Double(total) / Double(perPage)))) }
     var canPrev: Bool { currentPage > 1 }
@@ -210,6 +210,26 @@ struct StudiosView: View {
                            retryTitle: "重试") { Task { await vm.reload() } }
         } else {
             ScrollView {
+                // 超时重试横幅：请求超时后即使有旧数据也给重试入口，不干等
+                if vm.timedOut {
+                    Button {
+                        Task { await vm.reload() }
+                    } label: {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text("加载超时，点击重试")
+                            Spacer()
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .padding(10)
+                        .background(Color.orange.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal)
+                }
                 pageBar
                 LazyVGrid(columns: gridColumns, spacing: 18) {
                     ForEach(vm.studios) { st in

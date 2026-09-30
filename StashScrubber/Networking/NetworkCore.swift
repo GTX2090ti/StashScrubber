@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 // MARK: - 网络核心（统一收口）
 //
@@ -273,8 +274,8 @@ enum NetTransport {
 
     private static func makeAPI() -> URLSession {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 20
-        cfg.timeoutIntervalForResource = 60
+        cfg.timeoutIntervalForRequest = 10
+        cfg.timeoutIntervalForResource = 25
         // 不允许「等待网络可用」：宁可快速失败也不无限期挂着
         cfg.waitsForConnectivity = false
         // 缓存由 App 自己管（图片缓存 / 每次重拉数据），避免拿到过期或错误响应
@@ -746,5 +747,48 @@ final class NetLog: ObservableObject, @unchecked Sendable {
             + String(repeating: "-", count: 32)
         guard !list.isEmpty else { return head + "\n（无记录）" }
         return head + "\n" + list.map(\.block).joined(separator: "\n")
+    }
+}
+
+// MARK: - 网络接口变化监听（WiFi ↔ 流量切换时丢弃死连接）
+//
+// 只负责「网络路径变化后重建会话、清掉连接池里的死连接」，**不切换服务器地址**
+// （地址切换是 AppSettings 手动指定 / 测速自愈的事，与此无关）。
+// 原理：URLSession 连接池里残留旧网络的 keep-alive 连接，切换网络后这些连接
+// 已成半开死连接，新请求复用时挂起且不计入 URLSession 超时（卡在等连接），
+// 表现为「切完 WiFi / 流量后列表一直转圈」。这里在接口变化瞬间重建会话，
+// 让下一个请求直接走新连接，不用再等 10s 硬超时兜底。
+
+final class NetPathWatcher {
+    private let monitor = NWPathMonitor()
+    private let lock = NSLock()
+    private var lastSignature = ""
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let sig = Self.signature(path)
+            self.lock.lock()
+            let old = self.lastSignature
+            let first = old.isEmpty
+            self.lastSignature = sig
+            self.lock.unlock()
+            // 首次回调只是建立基线，不重建
+            guard !first, sig != old else { return }
+            NetTransport.resetAPI(reason: "网络接口变化（\(old) → \(sig)），丢弃死连接")
+            NetTransport.resetImage(reason: "网络接口变化，重建图片会话")
+            NetTransport.resetProbe(reason: "网络接口变化，重建探测会话")
+        }
+        monitor.start(queue: .global(qos: .utility))
+    }
+
+    /// 当前路径摘要：接口组合 + 是否可达，如 "wifi" / "cellular" / "offline"
+    static func signature(_ path: NWPath) -> String {
+        var parts: [String] = []
+        if path.usesInterfaceType(.wifi) { parts.append("wifi") }
+        if path.usesInterfaceType(.cellular) { parts.append("cellular") }
+        if path.usesInterfaceType(.wiredEthernet) { parts.append("ethernet") }
+        if parts.isEmpty { parts.append("other") }
+        return path.status == .satisfied ? parts.joined(separator: "+") : "offline"
     }
 }

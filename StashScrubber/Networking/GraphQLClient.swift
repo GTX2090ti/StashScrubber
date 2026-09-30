@@ -55,8 +55,8 @@ final class GraphQLClient {
     let profileName: String
     private let logTitle: String
 
-    /// 常规请求硬超时（秒）：服务器侧查询本身 <5s，25s 是「链路已死」的判据
-    static let hardTimeout: Double = 25
+    /// 常规请求硬超时（秒）：服务器侧查询本身 <5s，10s 是「链路已死」的判据
+    static let hardTimeout: Double = 10
     /// 长耗时请求硬超时（秒）：刮削 / 识别要由服务端去外部站点取数，给足时间
     static let longTimeout: Double = 120
 

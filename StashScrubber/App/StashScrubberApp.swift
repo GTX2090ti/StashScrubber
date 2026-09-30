@@ -11,6 +11,9 @@ struct StashScrubberApp: App {
     /// 此时连接还活着，盲目重建会让会话抖动、日志刷屏）
     @State private var lastPhase: ScenePhase = .active
 
+    /// 网络接口变化监听（WiFi ↔ 流量）：只重建会话丢弃死连接，不做地址切换
+    private let pathWatcher = NetPathWatcher()
+
     var body: some SwiftUI.Scene {
         WindowGroup {
             RootGate()
@@ -828,7 +831,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.42")
+            LabeledContent("版本", value: "1.5.43")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }
