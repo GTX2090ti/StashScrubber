@@ -31,7 +31,6 @@ jobs:
 
       - name: Archive (unsigned)
         run: |
-          set -o pipefail
           xcodebuild archive \
             -project StashScrubber.xcodeproj \
             -scheme StashScrubber \
@@ -41,7 +40,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${GITHUB_RUN_NUMBER} 2>&1 | tee build.log | tail -200
+            CURRENT_PROJECT_VERSION=${GITHUB_RUN_NUMBER}
 
       - name: Package unsigned IPA
         run: |
