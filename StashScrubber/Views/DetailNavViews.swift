@@ -173,9 +173,9 @@ struct TagDetailView: View {
                 let p = try await StashAPI.findScenesByTag(client, tagId: tagID, page: page, perPage: perPage)
                 sceneCount = p.count
                 scenes = p.scenes
-            } catch {
-                if !NetError.isCancellation(error) {
-                    error = NetError.friendly(error)
+            } catch let err {
+                if !NetError.isCancellation(err) {
+                    error = NetError.friendly(err)
                 }
             }
         }
@@ -347,9 +347,9 @@ struct StudioDetailView: View {
                 let p = try await StashAPI.findScenesByStudio(client, studioId: studioID, page: page, perPage: perPage)
                 sceneCount = p.count
                 scenes = p.scenes
-            } catch {
-                if !NetError.isCancellation(error) {
-                    error = NetError.friendly(error)
+            } catch let err {
+                if !NetError.isCancellation(err) {
+                    error = NetError.friendly(err)
                 }
             }
         }
