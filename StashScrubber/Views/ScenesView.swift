@@ -22,6 +22,8 @@ final class SceneListViewModel: ObservableObject {
     private var lastSort = ""
     private var lastDirection = ""
     private var generation = 0
+    /// 当前在飞的列表请求：翻页 / 重载先取消旧请求，快速翻页时不让旧页查询堆积
+    private var fetchTask: Task<Void, Never>?
     static let watchdogSeconds: Double = 15
 
     var totalPages: Int { max(1, Int(ceil(Double(total) / Double(perPage)))) }
@@ -36,7 +38,7 @@ final class SceneListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
-        await fetch(gen: generation)
+        await startFetch(gen: generation)
     }
 
     func goToPage(_ page: Int) async {
@@ -45,7 +47,17 @@ final class SceneListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
-        await fetch(gen: generation)
+        await startFetch(gen: generation)
+    }
+
+    /// 取消旧的在飞请求后只保留最新一次查询
+    private func startFetch(gen: Int) async {
+        fetchTask?.cancel()
+        let t: Task<Void, Never> = Task { [weak self] in
+            _ = await self?.fetch(gen: gen)
+        }
+        fetchTask = t
+        await t.value
     }
 
     func retry() async { await reload() }

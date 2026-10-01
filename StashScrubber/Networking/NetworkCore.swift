@@ -259,6 +259,27 @@ final class NetHealth: @unchecked Sendable {
 
 // MARK: - URLSession 会话（统一超时策略）
 
+// MARK: 自签名 / 非标准 HTTPS 证书信任（自用服务器场景）
+//
+// 用户常用自签证书或内网穿透的 HTTPS 反代；系统默认对这类证书直接拒绝 TLS 握手，
+// 表现为「Safari 能打开（用户信任过证书），App 却完全连不上」。
+// 这里对 serverTrust 一律放行（配合 project.yml 的 NSAllowsArbitraryLoads 全开），
+// 并把放行主机写入网络日志便于排障。仅适合访问自己服务器的私有工具。
+final class TrustAllDelegate: NSObject, URLSessionDelegate {
+    static let shared = TrustAllDelegate()
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            NetLog.shared.record(category: .diag, level: .info, title: "放行自签名证书",
+                                 message: "主机 \(challenge.protectionSpace.host)（HTTPS \(challenge.protectionSpace.port)）")
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
 enum NetTransport {
     private static let apiLock = NSLock()
     private static var apiSession = makeAPI()
@@ -281,7 +302,7 @@ enum NetTransport {
         // 缓存由 App 自己管（图片缓存 / 每次重拉数据），避免拿到过期或错误响应
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: TrustAllDelegate.shared, delegateQueue: nil)
     }
 
     /// 重建 API 会话并丢弃旧连接（硬超时 / 连续失败后调用）。
@@ -316,7 +337,7 @@ enum NetTransport {
         cfg.httpMaximumConnectionsPerHost = 6
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: TrustAllDelegate.shared, delegateQueue: nil)
     }
 
     /// 重建图片会话并丢弃旧连接（图片下载硬超时后调用）
@@ -349,7 +370,7 @@ enum NetTransport {
         cfg.waitsForConnectivity = false
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: TrustAllDelegate.shared, delegateQueue: nil)
     }
 
     /// 重建探测会话并丢弃旧连接（探测硬超时后调用）
@@ -612,7 +633,10 @@ final class NetLog: ObservableObject, @unchecked Sendable {
 
     /// 是否记录图片成功请求（默认关：列表滚动会产生大量噪音）
     static let verboseImageKey = "stash.netLogVerboseImage"
-    static var verboseImage: Bool { UserDefaults.standard.bool(forKey: verboseImageKey) }
+    static var verboseImage: Bool {
+        // 默认开启：图片请求的 URL 与耗时都进网络日志，封面加载异常时可直接定位
+        get { UserDefaults.standard.object(forKey: verboseImageKey) as? Bool ?? true }
+    }
 
     struct Entry: Identifiable, Equatable {
         let id = UUID()
@@ -769,6 +793,9 @@ final class NetPathWatcher {
     private let monitor = NWPathMonitor()
     private let lock = NSLock()
     private var lastSignature = ""
+    /// 上次执行「重建会话/选路」的时间：抑制 WiFi 信号抖动造成的频繁重建
+    private var lastActionAt = Date.distantPast
+    private static let debounce: TimeInterval = 5
 
     /// 当前是否为「纯流量」网络（没同时连 WiFi）——流量下内网地址必失败，选路要避开
     private static let stateLock = NSLock()
@@ -795,6 +822,16 @@ final class NetPathWatcher {
 
             // 首次回调只是建立基线，不重建
             guard !first, sig != old else { return }
+
+            // 抖动抑制：WiFi 信号波动时 NWPath 会在 wifi/offline/cellular 之间快速跳动，
+            // 5 秒内再次变化不再重复重建会话与选路（否则图片会话被反复重建，封面全在转圈）。
+            let now = Date()
+            guard now.timeIntervalSince(self.lastActionAt) > Self.debounce else {
+                self.lastActionAt = now
+                return
+            }
+            self.lastActionAt = now
+
             NetTransport.resetAPI(reason: "网络接口变化（\(old) → \(sig)），丢弃死连接")
             NetTransport.resetImage(reason: "网络接口变化，重建图片会话")
             NetTransport.resetProbe(reason: "网络接口变化，重建探测会话")

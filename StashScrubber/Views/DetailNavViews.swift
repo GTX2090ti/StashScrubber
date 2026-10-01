@@ -51,6 +51,8 @@ struct TagDetailView: View {
     @State private var error: String?
     @State private var anchor = ScrollMemory(requiresTopCrossed: true)
     @State private var currentPage = 1
+    /// 当前在飞的列表请求（快速翻页时取消旧请求）
+    @State private var fetchTask: Task<Void, Never>?
     private let perPage = 24
 
     private static let scrollSpace = "tag.scenes.scroll"
@@ -161,16 +163,24 @@ struct TagDetailView: View {
         guard page >= 1 && page <= totalPages else { return }
         currentPage = page
         anchor.clear()
-        loading = true
-        defer { loading = false }
-        do {
-            let client = try settings.makeClient()
-            let p = try await StashAPI.findScenesByTag(client, tagId: tagID, page: page, perPage: perPage)
-            sceneCount = p.count
-            scenes = p.scenes
-        } catch {
-            self.error = NetError.friendly(error)
+        // 快速翻页时取消旧请求，避免旧页结果晚到覆盖新页数据
+        fetchTask?.cancel()
+        let t = Task {
+            loading = true
+            defer { loading = false }
+            do {
+                let client = try settings.makeClient()
+                let p = try await StashAPI.findScenesByTag(client, tagId: tagID, page: page, perPage: perPage)
+                sceneCount = p.count
+                scenes = p.scenes
+            } catch {
+                if !NetError.isCancellation(error) {
+                    error = NetError.friendly(error)
+                }
+            }
         }
+        fetchTask = t
+        await t.value
     }
 }
 
@@ -189,6 +199,8 @@ struct StudioDetailView: View {
     @State private var error: String?
     @State private var anchor = ScrollMemory(requiresTopCrossed: true)
     @State private var currentPage = 1
+    /// 当前在飞的列表请求（快速翻页时取消旧请求）
+    @State private var fetchTask: Task<Void, Never>?
     private let perPage = 24
 
     private static let scrollSpace = "studio.scenes.scroll"
@@ -322,18 +334,26 @@ struct StudioDetailView: View {
         guard page >= 1 && page <= totalPages else { return }
         currentPage = page
         anchor.clear()
-        loading = true
-        defer { loading = false }
-        do {
-            let client = try settings.makeClient()
-            if studio == nil {
-                studio = try await StashAPI.findStudioByID(client, id: studioID)
+        // 快速翻页时取消旧请求，避免旧页结果晚到覆盖新页数据
+        fetchTask?.cancel()
+        let t = Task {
+            loading = true
+            defer { loading = false }
+            do {
+                let client = try settings.makeClient()
+                if studio == nil {
+                    studio = try await StashAPI.findStudioByID(client, id: studioID)
+                }
+                let p = try await StashAPI.findScenesByStudio(client, studioId: studioID, page: page, perPage: perPage)
+                sceneCount = p.count
+                scenes = p.scenes
+            } catch {
+                if !NetError.isCancellation(error) {
+                    error = NetError.friendly(error)
+                }
             }
-            let p = try await StashAPI.findScenesByStudio(client, studioId: studioID, page: page, perPage: perPage)
-            sceneCount = p.count
-            scenes = p.scenes
-        } catch {
-            self.error = NetError.friendly(error)
         }
+        fetchTask = t
+        await t.value
     }
 }

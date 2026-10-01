@@ -183,6 +183,8 @@ final class AppSettings: ObservableObject {
     }
     /// 最近一次选路结论（设置页 / 诊断页展示）
     @Published private(set) var lastSwitchReason: String?
+    /// 上次由「网络接口变化」触发的自动选路时间：10 秒冷却防 WiFi 抖动反复切地址
+    private var lastNetReRouteAt = Date.distantPast
 
     private init() {
         let d = UserDefaults.standard
@@ -229,10 +231,15 @@ final class AppSettings: ObservableObject {
             }
         }
 
-        // 网络接口变化（WiFi ↔ 流量）→ 重新选路：流量下直接避开内网地址
+        // 网络接口变化（WiFi ↔ 流量）→ 重新选路：流量下优先外网。
+        // 10 秒冷却：WiFi 信号抖动触发的连续回调不会反复切地址、反复重建会话。
         NetPathWatcher.shared.onInterfaceChange = { [weak self] in
             Task { @MainActor in
-                await self?.autoSelectSlot(force: true)
+                guard let self else { return }
+                let now = Date()
+                guard now.timeIntervalSince(self.lastNetReRouteAt) > 10 else { return }
+                self.lastNetReRouteAt = now
+                await self.autoSelectSlot(force: true)
             }
         }
     }
@@ -396,7 +403,7 @@ final class AppSettings: ObservableObject {
         // 切换服务器后立即重建会话，避免旧连接池吊死请求
         NetTransport.resetAPI(reason: "切换到\(activeConnection?.name ?? "新连接")，重建 API 会话")
         NetTransport.resetImage(reason: "切换到\(activeConnection?.name ?? "新连接")，重建图片会话")
-        Task { await autoSelectSlot(force: true) }
+        scheduleAutoSelect(force: true)
     }
 
     /// 兼容旧调用：按运行时档案切换连接
@@ -425,7 +432,7 @@ final class AppSettings: ObservableObject {
     /// 取消锁定，回到「优先内网、自动兜底」
     func clearPin() {
         unpin()
-        Task { await autoSelectSlot(force: true) }
+        scheduleAutoSelect(force: true)
     }
 
     /// 离开规则 WiFi 时的解锁：仅解除「由 WiFi 规则设置」的锁定，不动手动锁定。
@@ -476,6 +483,16 @@ final class AppSettings: ObservableObject {
 
     // MARK: 选路（优先内网，不可达自动切外网）
 
+    /// 选路串行化：快速切换服务器 / 反复解锁时取消旧的选路任务，只保留最后一次，
+    /// 避免多个选路并发实测互相覆盖、日志刷屏
+    private var selectTask: Task<Void, Never>?
+    private func scheduleAutoSelect(force: Bool) {
+        selectTask?.cancel()
+        selectTask = Task { @MainActor in
+            await self.autoSelectSlot(force: force)
+        }
+    }
+
     /// 依据「地址类型 + 锁定槽位 + 优先内网」，实测优先地址可达性后确定生效地址。
     /// 优先地址不可达且未被锁定 → 自动兜底到另一侧。结果写入网络日志。
     func autoSelectSlot(force: Bool = false) async {
@@ -500,12 +517,23 @@ final class AppSettings: ObservableObject {
             target = c.preferredSlot ?? slots[0]
         }
 
-        // 2) 流量网络适配：纯流量下内网地址必然不可达（运营商网络里没有局域网 IP），
-        //    未手动锁定时直接改走外网，省掉一次注定失败的内网实测（白等 10 秒超时）。
+        // 2) 流量网络适配：纯流量下内网地址通常不可达（运营商网络里没有局域网 IP），
+        //    未手动锁定时优先实测外网；但外网实测不可达时必须回退内网流程，
+        //    避免「WiFi 信号波动被误判为流量」时把地址钉在外网、在家完全连不上。
         if NetPathWatcher.currentIsCellular, target == .lan, c.hasWAN, pinnedSlot == nil {
-            apply(slot: .wan, reason: "当前为流量网络，自动改用外网地址")
-            markSynced()
-            return
+            let wan = await LatencyMonitor.shared.measure(url: c.url(for: .wan) ?? "",
+                                                          apiKey: c.apiKey,
+                                                          name: "\(c.name) · 外网（流量适配）",
+                                                          force: true)
+            if wan.isReachable {
+                apply(slot: .wan, reason: "当前为流量网络，自动改用外网地址（\(wan.text)）")
+                markSynced()
+                return
+            }
+            // 外网也不可达（误判流量 / 外网反代本身不通）→ 回退到正常内网流程
+            NetLog.shared.record(category: .diag, level: .warn, title: "流量适配回退",
+                                 message: "外网地址不可达（\(wan.detail ?? wan.text)），回退内网流程")
+            target = .lan
         }
 
         // 2) 实测优先地址
@@ -850,7 +878,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var aboutSection: some View {
         Section("说明") {
-            LabeledContent("版本", value: "1.5.44")
+            LabeledContent("版本", value: "1.5.45")
             LabeledContent("适配", value: "iPhone / iPad · iOS 16+")
         }
     }
