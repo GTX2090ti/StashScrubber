@@ -33,12 +33,13 @@ import SwiftUI
 final class ScrollMemory: @unchecked Sendable {
     /// 判定「已滚过顶部」时容许的浮点误差（pt）
     private static let edge: CGFloat = 4
-    /// 恢复重试间隔（秒）：要够密，才能让某一次恰好落在转场动画结束之后
-    private static let retryInterval: Double = 0.06
-    /// 基础恢复窗口（秒）：首次立即执行 + 按 0.06s 步进 ≈ 0.55s，
+    /// 恢复重试间隔（秒）：v1.5.46 从 0.06 放宽到 0.15 —— 高频 scrollTo 会反复触发
+    /// LazyVGrid 布局重算，第 2 页等远距离锚点时连续滚动造成 UI 冻结（用户感知「返回就卡住」）
+    private static let retryInterval: Double = 0.15
+    /// 基础恢复窗口（秒）：首次立即执行 + 按 0.15s 步进 ≈ 0.9s，
     /// 覆盖 push/pop 转场（约 0.35s）与 LazyVGrid 首帧渲染。
     /// 窗口内「锚点项没有上报」会被当作「还没渲染出来」而继续重试。
-    private static let recoverWindow: Double = 1.2
+    private static let recoverWindow: Double = 0.9
     /// 「已回到顶部」的容差（pt）
     private static let topTolerance: CGFloat = 3
 
