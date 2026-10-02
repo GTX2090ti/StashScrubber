@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Scene, rewriteImage } from '../model/Models';
+import { Scene, Performer, Tag, FindSceneResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
@@ -38,9 +38,11 @@ struct SceneDetailPage {
             files { path }
           }
         }`;
-      const data = await client.send(q, { 'id': this.sceneId });
-      const s = data['findScene'] as Scene;
-      this.scene = s;
+      const data = await client.send(q, { 'id': this.sceneId }) as FindSceneResp;
+      const s = data.findScene;
+      if (s !== undefined && s !== null) {
+        this.scene = s;
+      }
     } catch (e) {
       const ge = e as Error;
       this.error = ge !== null ? ge.message : '加载失败';
@@ -151,11 +153,11 @@ struct SceneDetailPage {
               Column({ space: 8 }) {
                 Text('演员（' + this.scene.performers.length + '）')
                   .fontSize(14)
-                  .fontWeight(FontWeight.SemiBold)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#E5E7EB')
                   .width('100%')
                 Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.scene.performers, (p) => {
+                  ForEach(this.scene.performers, (p: Performer) => {
                     Text(p.name)
                       .fontSize(13)
                       .fontColor('#93C5FD')
@@ -163,7 +165,7 @@ struct SceneDetailPage {
                       .backgroundColor('#1E3A5F')
                       .borderRadius(14)
                       .margin({ right: 8, bottom: 8 })
-                  }, (p) => p.id)
+                  }, (p: Performer) => p.id)
                 }
                 .width('100%')
               }
@@ -176,11 +178,11 @@ struct SceneDetailPage {
               Column({ space: 8 }) {
                 Text('标签（' + this.scene.tags.length + '）')
                   .fontSize(14)
-                  .fontWeight(FontWeight.SemiBold)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#E5E7EB')
                   .width('100%')
                 Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.scene.tags, (t) => {
+                  ForEach(this.scene.tags, (t: Tag) => {
                     Text(t.name)
                       .fontSize(13)
                       .fontColor('#FCD34D')
@@ -188,7 +190,7 @@ struct SceneDetailPage {
                       .backgroundColor('#3F3A1E')
                       .borderRadius(14)
                       .margin({ right: 8, bottom: 8 })
-                  }, (t) => t.id)
+                  }, (t: Tag) => t.id)
                 }
                 .width('100%')
               }
@@ -201,7 +203,7 @@ struct SceneDetailPage {
               Column({ space: 8 }) {
                 Text('简介')
                   .fontSize(14)
-                  .fontWeight(FontWeight.SemiBold)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#E5E7EB')
                   .width('100%')
                 Text(this.scene.details)
@@ -224,7 +226,6 @@ struct SceneDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#0B0B0F')
-    .expandSafeArea([SafeAreaExtensionType.SYSTEM])
   }
 
   @Builder

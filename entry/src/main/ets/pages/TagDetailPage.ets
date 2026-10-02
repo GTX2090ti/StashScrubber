@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Tag } from '../model/Models';
+import { Tag, FindTagResp } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 
 // 标签详情页（基础版：标签信息；后续轮加该标签下的短片列表）
@@ -28,8 +28,9 @@ struct TagDetailPage {
         query FindTag($id: ID!) {
           findTag(id: $id) { id name }
         }`;
-      const data = await client.send(q, { 'id': this.tagId });
-      this.tag = data['findTag'] as Tag;
+      const data = await client.send(q, { 'id': this.tagId }) as FindTagResp;
+      const t = data.findTag;
+      this.tag = t !== undefined && t !== null ? t : null;
     } catch (e) {
       const ge = e as Error;
       this.error = ge !== null ? ge.message : '加载失败';

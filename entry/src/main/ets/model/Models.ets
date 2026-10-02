@@ -68,48 +68,78 @@ export interface StudioPage {
   studios: Studio[];
 }
 
+// GraphQL 查询响应外壳（JSON as 断言用，字段可选避免严格空校验）
+export interface FindScenesResp {
+  findScenes?: ScenePage;
+}
+
+export interface FindPerformersResp {
+  findPerformers?: PerformerPage;
+}
+
+export interface FindStudiosResp {
+  findStudios?: StudioPage;
+}
+
+export interface FindSceneResp {
+  findScene?: Scene;
+}
+
+export interface FindPerformerResp {
+  findPerformer?: Performer;
+}
+
+export interface FindStudioResp {
+  findStudio?: Studio;
+}
+
+export interface FindTagResp {
+  findTag?: Tag;
+}
+
 // 图片地址重写：主机与当前档案不一致时改写为「档案基址 + 原路径」
 export function rewriteImage(raw: string, base: string): string {
   if (raw === '') {
     return raw;
   }
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch (e) {
-    return raw;
-  }
-  if (url.hostname === '') {
+  if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
     return raw;
   }
   let bs: string = base.trim();
   while (bs.endsWith('/')) {
     bs = bs.substring(0, bs.length - 1);
   }
-  let baseUrl: URL;
-  try {
-    baseUrl = new URL(bs);
-  } catch (e) {
+  // 取 raw 的 host:port
+  const schemeEnd = raw.indexOf('://');
+  if (schemeEnd < 0) {
     return raw;
   }
-  // 主机与端口相同则直接用
-  if (url.host === baseUrl.host) {
+  const afterScheme = raw.substring(schemeEnd + 3);
+  const hostEnd = afterScheme.indexOf('/');
+  const rawHost = hostEnd < 0 ? afterScheme : afterScheme.substring(0, hostEnd);
+  // 取 base 的 host:port
+  const bsSchemeEnd = bs.indexOf('://');
+  if (bsSchemeEnd < 0) {
     return raw;
   }
-  // 改写：base 路径 + 原路径与查询
-  let path = url.pathname;
-  if (!path.startsWith('/')) {
-    path = '/' + path;
+  const bsAfter = bs.substring(bsSchemeEnd + 3);
+  const bsHostEnd = bsAfter.indexOf('/');
+  const bsHost = bsHostEnd < 0 ? bsAfter : bsAfter.substring(0, bsHostEnd);
+  // 主机相同直接返回
+  if (rawHost === bsHost) {
+    return raw;
   }
-  let mergedPath = baseUrl.pathname;
-  if (mergedPath.endsWith('/')) {
-    mergedPath = mergedPath.substring(0, mergedPath.length - 1);
+  // 改写：base 根 + raw 的路径与查询
+  const rawPath = hostEnd < 0 ? '/' : afterScheme.substring(hostEnd);
+  let out = bs;
+  if (bsHostEnd >= 0) {
+    // base 带子路径时保留子路径
+    out = bs;
   }
-  let out = baseUrl.origin + mergedPath + path;
-  if (url.search !== '') {
-    out += url.search;
+  while (out.endsWith('/')) {
+    out = out.substring(0, out.length - 1);
   }
-  return out;
+  return out + rawPath;
 }
 
 // 归一化档案基址（去尾斜杠）

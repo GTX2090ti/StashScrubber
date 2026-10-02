@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Studio, rewriteImage } from '../model/Models';
+import { Studio, FindStudioResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
@@ -29,8 +29,11 @@ struct StudioDetailPage {
         query FindStudio($id: ID!) {
           findStudio(id: $id) { id name image_path rating100 scene_count }
         }`;
-      const data = await client.send(q, { 'id': this.studioId });
-      this.studio = data['findStudio'] as Studio;
+      const data = await client.send(q, { 'id': this.studioId }) as FindStudioResp;
+      const st = data.findStudio;
+      if (st !== undefined && st !== null) {
+        this.studio = st;
+      }
     } catch (e) {
       const ge = e as Error;
       this.error = ge !== null ? ge.message : '加载失败';
@@ -94,7 +97,7 @@ struct StudioDetailPage {
               }
             }
             .width('100%')
-            .justifyContent(FlexAlign.Center)
+            .alignContent(Alignment.Center)
 
             Text(this.studio.name)
               .fontSize(22)
@@ -128,6 +131,5 @@ struct StudioDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#0B0B0F')
-    .expandSafeArea([SafeAreaExtensionType.SYSTEM])
   }
 }

@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Performer, PerformerPage, rewriteImage } from '../model/Models';
+import { Performer, PerformerPage, FindPerformersResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
@@ -66,10 +66,12 @@ export struct PerformerListPage {
       if (this.query.trim() !== '') {
         filter['q'] = this.query.trim();
       }
-      const data = await client.send(q, { 'filter': filter });
-      const fp = data['findPerformers'];
-      this.performers = fp['performers'] as Performer[];
-      this.total = fp['count'] as number;
+      const data = await client.send(q, { 'filter': filter }) as FindPerformersResp;
+      const fp = data.findPerformers;
+      if (fp !== undefined && fp !== null) {
+        this.performers = fp.performers !== undefined ? fp.performers : [];
+        this.total = fp.count !== undefined ? fp.count : 0;
+      }
       this.currentPage = page;
     } catch (e) {
       const ge = e as Error;

@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Studio, StudioPage } from '../model/Models';
+import { Studio, StudioPage, FindStudiosResp } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 
 // 工作室列表页：行式列表 + 翻页 + 搜索
@@ -58,10 +58,12 @@ export struct StudioListPage {
       if (this.query.trim() !== '') {
         filter['q'] = this.query.trim();
       }
-      const data = await client.send(q, { 'filter': filter });
-      const fp = data['findStudios'];
-      this.studios = fp['studios'] as Studio[];
-      this.total = fp['count'] as number;
+      const data = await client.send(q, { 'filter': filter }) as FindStudiosResp;
+      const fp = data.findStudios;
+      if (fp !== undefined && fp !== null) {
+        this.studios = fp.studios !== undefined ? fp.studios : [];
+        this.total = fp.count !== undefined ? fp.count : 0;
+      }
       this.currentPage = page;
     } catch (e) {
       const ge = e as Error;

@@ -45,7 +45,12 @@ export struct SettingsPage {
           .margin({ top: 16 })
 
         // 当前档案
-        this.section('当前服务器') {
+        Column({ space: 10 }) {
+          Text('当前服务器')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#E5E7EB')
+            .width('100%')
           Text(this.currentProfileLabel())
             .fontSize(13)
             .fontColor('#E5E7EB')
@@ -56,9 +61,19 @@ export struct SettingsPage {
             .fontColor('#6B7280')
             .width('100%')
         }
+        .width('100%')
+        .padding(14)
+        .backgroundColor('#131318')
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
 
         // 网络日志
-        this.section('网络日志') {
+        Column({ space: 10 }) {
+          Text('网络日志')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#E5E7EB')
+            .width('100%')
           Text('记录每次 GraphQL 请求的结果，可一键复制用于排障')
             .fontSize(11)
             .fontColor('#6B7280')
@@ -96,9 +111,19 @@ export struct SettingsPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
         }
+        .width('100%')
+        .padding(14)
+        .backgroundColor('#131318')
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
 
         // 账号
-        this.section('账号') {
+        Column({ space: 10 }) {
+          Text('账号')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#E5E7EB')
+            .width('100%')
           Button('重置服务器配置（返回登录页）')
             .fontSize(14)
             .height(44)
@@ -110,9 +135,19 @@ export struct SettingsPage {
               this.resetConfig();
             })
         }
+        .width('100%')
+        .padding(14)
+        .backgroundColor('#131318')
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
 
         // 说明
-        this.section('说明') {
+        Column({ space: 10 }) {
+          Text('说明')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#E5E7EB')
+            .width('100%')
           Row() {
             Text('版本').fontSize(13).fontColor('#E5E7EB')
             Blank()
@@ -126,6 +161,11 @@ export struct SettingsPage {
           }
           .width('100%')
         }
+        .width('100%')
+        .padding(14)
+        .backgroundColor('#131318')
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 32 })
@@ -134,22 +174,5 @@ export struct SettingsPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#0B0B0F')
-  }
-
-  @Builder
-  private section(title: string, content: () => void) {
-    Column({ space: 10 }) {
-      Text(title)
-        .fontSize(15)
-        .fontWeight(FontWeight.SemiBold)
-        .fontColor('#E5E7EB')
-        .width('100%')
-      content()
-    }
-    .width('100%')
-    .padding(14)
-    .backgroundColor('#131318')
-    .borderRadius(12)
-    .alignItems(HorizontalAlign.Start)
   }
 }

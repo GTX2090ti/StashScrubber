@@ -40,7 +40,7 @@ export class AppSettings {
         this.profiles = [];
       }
       this.currentProfileName = p.getSync('currentProfile', '') as string;
-    }).catch((e) => {
+    }).catch((e: Error) => {
       console.error('AppSettings init failed: ' + JSON.stringify(e));
     });
   }

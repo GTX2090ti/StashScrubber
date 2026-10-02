@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Scene, ScenePage, rewriteImage } from '../model/Models';
+import { Scene, ScenePage, FindScenesResp, rewriteImage } from '../model/Models';
 import { GraphQLClient, makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 import { SceneCard } from '../common/SceneCard';
@@ -15,7 +15,7 @@ export struct SceneListPage {
   @State private error: string = '';
   @State private query: string = '';
   @State private sort: string = 'date';
-  @State private direction: string = 'DESC';
+  @State private sortDirection: string = 'DESC';
 
   private perPage: number = 120;
 
@@ -70,15 +70,17 @@ export struct SceneListPage {
         'page': page,
         'per_page': this.perPage,
         'sort': this.sort,
-        'direction': this.direction
+        'direction': this.sortDirection
       };
       if (this.query.trim() !== '') {
         filter['q'] = this.query.trim();
       }
-      const data = await client.send(q, { 'filter': filter, 'sf': null });
-      const fp = data['findScenes'];
-      this.scenes = fp['scenes'] as Scene[];
-      this.total = fp['count'] as number;
+      const data = await client.send(q, { 'filter': filter }) as FindScenesResp;
+      const fs = data.findScenes;
+      if (fs !== undefined && fs !== null) {
+        this.scenes = fs.scenes !== undefined ? fs.scenes : [];
+        this.total = fs.count !== undefined ? fs.count : 0;
+      }
       this.currentPage = page;
     } catch (e) {
       const ge = e as Error;
@@ -100,7 +102,7 @@ export struct SceneListPage {
   }
 
   private toggleDirection(): void {
-    this.direction = this.direction === 'DESC' ? 'ASC' : 'DESC';
+    this.sortDirection = this.sortDirection === 'DESC' ? 'ASC' : 'DESC';
     this.reload();
   }
 
@@ -175,7 +177,7 @@ export struct SceneListPage {
           .onClick(() => {
             this.changeSort(this.sort === 'date' ? 'title' : (this.sort === 'title' ? 'rating' : 'date'));
           })
-        Button(this.direction === 'DESC' ? '↓' : '↑')
+        Button(this.sortDirection === 'DESC' ? '↓' : '↑')
           .fontSize(12)
           .height(40)
           .width(40)

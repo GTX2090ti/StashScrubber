@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { Performer, rewriteImage } from '../model/Models';
+import { Performer, Tag, FindPerformerResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
@@ -34,8 +34,11 @@ struct PerformerDetailPage {
             tags { id name }
           }
         }`;
-      const data = await client.send(q, { 'id': this.performerId });
-      this.performer = data['findPerformer'] as Performer;
+      const data = await client.send(q, { 'id': this.performerId }) as FindPerformerResp;
+      const p = data.findPerformer;
+      if (p !== undefined && p !== null) {
+        this.performer = p;
+      }
     } catch (e) {
       const ge = e as Error;
       this.error = ge !== null ? ge.message : '加载失败';
@@ -103,7 +106,7 @@ struct PerformerDetailPage {
               }
             }
             .width('100%')
-            .justifyContent(FlexAlign.Center)
+            .alignContent(Alignment.Center)
 
             Text(this.performer.name)
               .fontSize(22)
@@ -151,11 +154,11 @@ struct PerformerDetailPage {
               Column({ space: 8 }) {
                 Text('标签（' + this.performer.tags.length + '）')
                   .fontSize(14)
-                  .fontWeight(FontWeight.SemiBold)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#E5E7EB')
                   .width('100%')
                 Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.performer.tags, (t) => {
+                  ForEach(this.performer.tags, (t: Tag) => {
                     Text(t.name)
                       .fontSize(13)
                       .fontColor('#FCD34D')
@@ -163,7 +166,7 @@ struct PerformerDetailPage {
                       .backgroundColor('#3F3A1E')
                       .borderRadius(14)
                       .margin({ right: 8, bottom: 8 })
-                  }, (t) => t.id)
+                  }, (t: Tag) => t.id)
                 }
                 .width('100%')
               }
@@ -176,7 +179,7 @@ struct PerformerDetailPage {
               Column({ space: 8 }) {
                 Text('简介')
                   .fontSize(14)
-                  .fontWeight(FontWeight.SemiBold)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#E5E7EB')
                   .width('100%')
                 Text(this.performer.details)
@@ -199,7 +202,6 @@ struct PerformerDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#0B0B0F')
-    .expandSafeArea([SafeAreaExtensionType.SYSTEM])
   }
 
   @Builder

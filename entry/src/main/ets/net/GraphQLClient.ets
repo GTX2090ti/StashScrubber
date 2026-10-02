@@ -12,6 +12,16 @@ export class GraphQLError extends Error {
   }
 }
 
+// GraphQL 响应外壳（调用方再 as 到具体查询接口）
+interface RawGraphQLError {
+  message?: string;
+}
+
+interface RawEnvelope {
+  data?: object;
+  errors?: RawGraphQLError[];
+}
+
 // 轻量 GraphQL 客户端（无第三方依赖）
 // 硬超时：URLSession 在鸿蒙不存在连接池吊死问题（每次 createHttp 独立连接），
 // 但保留硬超时兜底与链路失败重试一次，保证 loading 状态一定复位。
@@ -28,16 +38,16 @@ export class GraphQLClient {
     this.profileName = profileName;
   }
 
-  // 发送 GraphQL 请求并返回 data 节点（ESObject 由调用方 as 到具体类型）
-  async send(query: string, variables: Record<string, Object> = {}, timeout: number = GraphQLClient.hardTimeout): Promise<ESObject> {
+  // 发送 GraphQL 请求并返回 data 节点（调用方 as 到具体查询接口）
+  async send(query: string, variables: Record<string, Object> = {}, timeout: number = GraphQLClient.hardTimeout): Promise<object> {
     const bodyObj: Record<string, Object> = { 'query': query };
     if (Object.keys(variables).length > 0) {
       bodyObj['variables'] = variables;
     }
     const body = JSON.stringify(bodyObj);
 
-    const doOnce = (): Promise<ESObject> => {
-      return new Promise<ESObject>((resolve, reject) => {
+    const doOnce = (): Promise<object> => {
+      return new Promise<object>((resolve, reject) => {
         const req = http.createHttp();
         const timer = setTimeout(() => {
           req.destroy();
@@ -67,13 +77,16 @@ export class GraphQLClient {
             reject(new GraphQLError(code, 'HTTP ' + code.toString() + '：' + resultStr.substring(0, 200)));
             return;
           }
-          let obj: ESObject = JSON.parse(resultStr);
-          const data: ESObject = obj['data'];
+          const obj = JSON.parse(resultStr) as RawEnvelope;
+          const data = obj.data;
           if (data === undefined || data === null) {
-            const errs = obj['errors'];
+            const errs = obj.errors;
             let msg = 'Stash 返回错误';
-            if (Array.isArray(errs) && errs.length > 0) {
-              msg = errs[0]['message'] as string;
+            if (errs !== undefined && errs !== null && errs.length > 0) {
+              const first = errs[0];
+              if (first !== undefined && first.message !== undefined) {
+                msg = first.message;
+              }
             }
             NetLog.instance.record('GraphQL', 'ERROR', this.profileName + ' 业务错误', msg);
             req.destroy();
@@ -83,7 +96,7 @@ export class GraphQLClient {
           NetLog.instance.record('GraphQL', 'INFO', this.profileName + ' 查询成功');
           req.destroy();
           resolve(data);
-        }).catch((err) => {
+        }).catch((err: Error) => {
           clearTimeout(timer);
           let msg = '网络错误';
           if (err !== null && err !== undefined && err.message !== undefined) {
@@ -107,10 +120,10 @@ export class GraphQLClient {
         try {
           return await doOnce();
         } catch (e2) {
-          throw e2;
+          throw e2 as Error;
         }
       }
-      throw e;
+      throw e as Error;
     }
   }
 }
