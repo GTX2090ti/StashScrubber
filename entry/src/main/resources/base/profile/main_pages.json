@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/LoginPage",
+    "pages/SceneDetailPage",
+    "pages/PerformerDetailPage",
+    "pages/StudioDetailPage",
+    "pages/TagDetailPage"
+  ]
+}
