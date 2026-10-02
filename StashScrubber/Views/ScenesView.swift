@@ -38,7 +38,7 @@ final class SceneListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
-        ImageCache.shared.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
+        ImageCache.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
         await startFetch(gen: generation)
     }
 
@@ -48,7 +48,7 @@ final class SceneListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
-        ImageCache.shared.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
+        ImageCache.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
         await startFetch(gen: generation)
     }
 
