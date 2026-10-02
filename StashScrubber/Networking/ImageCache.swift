@@ -91,6 +91,29 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
     private static var consecutiveImageFailures = 0
     private static let failureThreshold = 3
 
+    // MARK: 下载代际（v1.5.48）
+    //
+    // 翻页 / 切 Tab 会取消 SwiftUI 视图任务，但 inflight 下载是独立 Task，
+    // 不继承调用者的取消 → 旧页封面下载继续排队、占用并发门，
+    // 快速翻页时任务越积越多（第 8 页 / 切页「卡加载」的真因）。
+    // 每次翻页 / 切页递增代际：旧代任务在 acquire 前后发现代际已变，
+    // 立即作废退出，不发起下载、不给新页面添堵。
+    private static let generationLock = NSLock()
+    private static var fetchGeneration = 0
+
+    private static func currentGeneration() -> Int {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return fetchGeneration
+    }
+
+    /// 翻页 / 切 Tab / 重新加载时调用：作废所有在飞与排队的图片下载
+    static func invalidatePendingDownloads() {
+        generationLock.lock()
+        fetchGeneration += 1
+        generationLock.unlock()
+    }
+
     /// 并发门：信号量语义的 actor，acquire 满员时挂起等待
     private actor DownloadGate {
         private let max: Int
@@ -225,9 +248,20 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
             flightLock.unlock()
             return t
         }
+        let gen = Self.currentGeneration()
         let t = Task<DownloadOutcome, Never> { [weak self] in
+            // 创建后页面已切走（代际变化）：不入队、不下载，立即让位
+            guard gen == Self.currentGeneration() else {
+                _ = self?.finishFlight(key)
+                return DownloadOutcome(data: nil, error: nil)
+            }
             await Self.downloadGate.acquire()
             defer { Task { await Self.downloadGate.release() } }
+            // 排队期间页面又翻走 / 切走：作废，不再发起下载
+            guard gen == Self.currentGeneration() else {
+                _ = self?.finishFlight(key)
+                return DownloadOutcome(data: nil, error: nil)
+            }
             let outcome = await Self.download(url: url, apiKey: apiKey)
             _ = self?.finishFlight(key)
             return outcome

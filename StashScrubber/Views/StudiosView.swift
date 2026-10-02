@@ -30,6 +30,7 @@ final class StudioListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
+        ImageCache.shared.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
         await startFetch(gen: generation)
     }
 
@@ -39,6 +40,7 @@ final class StudioListViewModel: ObservableObject {
         error = nil
         timedOut = false
         generation += 1
+        ImageCache.shared.invalidatePendingDownloads()   // 作废旧页在飞/排队图片下载
         await startFetch(gen: generation)
     }
 
