@@ -608,19 +608,21 @@ struct ScenesView: View {
                     // 海报网格：一排固定 3 个竖版 2:3 海报卡片
                     LazyVGrid(columns: gridColumns, spacing: 18) {
                         ForEach(vm.scenes) { s in
-                            if selectionMode {
-                                Button {
-                                    toggleSelect(s.id)
-                                } label: {
-                                    SceneCard(scene: s)
-                                        .overlay(alignment: .topTrailing) { selectionBadge(s.id) }
+                            Group {
+                                if selectionMode {
+                                    Button {
+                                        toggleSelect(s.id)
+                                    } label: {
+                                        SceneCard(scene: s)
+                                            .overlay(alignment: .topTrailing) { selectionBadge(s.id) }
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    NavigationLink(value: s.id) {
+                                        SceneCard(scene: s)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                            } else {
-                                NavigationLink(value: s.id) {
-                                    SceneCard(scene: s)
-                                }
-                                .buttonStyle(.plain)
                             }
                             .id(s.id)
                             .background(scrollProbe(s.id))
@@ -631,19 +633,21 @@ struct ScenesView: View {
                     // 列表模式：左图右文整行卡片
                     LazyVStack(spacing: 0) {
                         ForEach(vm.scenes) { s in
-                            if selectionMode {
-                                Button {
-                                    toggleSelect(s.id)
-                                } label: {
-                                    SceneRow(scene: s)
-                                        .overlay(alignment: .trailing) { selectionBadge(s.id) }
+                            Group {
+                                if selectionMode {
+                                    Button {
+                                        toggleSelect(s.id)
+                                    } label: {
+                                        SceneRow(scene: s)
+                                            .overlay(alignment: .trailing) { selectionBadge(s.id) }
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    NavigationLink(value: s.id) {
+                                        SceneRow(scene: s)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                            } else {
-                                NavigationLink(value: s.id) {
-                                    SceneRow(scene: s)
-                                }
-                                .buttonStyle(.plain)
                             }
                             .id(s.id)
                             .background(scrollProbe(s.id))
