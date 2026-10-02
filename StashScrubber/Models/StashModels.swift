@@ -60,11 +60,13 @@ struct Scene: Codable, Hashable, Identifiable {
     var tags: [Tag]?
     var paths: ScenePaths?
     var files: [SceneFile]?
+    /// 已整理标记（Stash organized）——App 内作为「收藏」使用
+    var organized: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, title, details, date, rating100, urls
         case oCounter = "o_counter"
-        case studio, performers, tags, paths, files
+        case studio, performers, tags, paths, files, organized
     }
 
     init(from decoder: Decoder) throws {
@@ -80,6 +82,7 @@ struct Scene: Codable, Hashable, Identifiable {
         tags = try c.decodeIfPresent([Tag].self, forKey: .tags)
         paths = try c.decodeIfPresent(ScenePaths.self, forKey: .paths)
         files = try c.decodeIfPresent([SceneFile].self, forKey: .files)
+        organized = try c.decodeIfPresent(Bool.self, forKey: .organized)
         // 该 Stash 实测 urls 为 [String] 纯字符串数组
         urls = try c.decodeIfPresent([String].self, forKey: .urls)
     }
@@ -179,6 +182,7 @@ struct SceneUpdateInput: Encodable {
     var tagIds: [String]?
     var urls: [String]?
     var coverImage: String?   // base64 data URI（cover_image，snakeCase 自动转换）
+    var organized: Bool?      // 收藏标记（Stash organized）
 }
 
 struct PerformerUpdateInput: Encodable {

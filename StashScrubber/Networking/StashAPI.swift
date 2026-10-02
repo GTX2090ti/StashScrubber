@@ -26,7 +26,7 @@ enum StashAPI {
           findScenes(filter: $filter, scene_filter: $sf) {
             count
             scenes {
-              id title details date rating100 o_counter
+              id title details date rating100 o_counter organized
               urls
               studio { id name }
               performers { id name }
@@ -49,7 +49,7 @@ enum StashAPI {
         let q = """
         query FindScene($id: ID!) {
           findScene(id: $id) {
-            id title details date rating100 o_counter
+            id title details date rating100 o_counter organized
             urls
             studio { id name }
             performers { id name image_path birthdate details }
@@ -419,6 +419,31 @@ enum StashAPI {
         """
         let r: R = try await c.send(q, variables: ["input": try jsonDict(input)], as: R.self)
         if r.sceneUpdate == nil { throw StashAPIError.notFound("sceneUpdate") }
+    }
+
+    // MARK: 批量操作（多选模式）
+
+    /// 批量执行同一个变更：逐条发送，单条失败不中断整体（mutation 不做自动重试，避免重复写入）。
+    /// - Parameter mutate: 对每条场景构造 SceneUpdateInput 的闭包（例如 `{ _, input in input.organized = true }`），
+    ///   第一个参数是该场景对象（用于合并现有标签等）
+    /// - Returns: (成功条数, 失败项描述列表)
+    static func bulkUpdate(_ c: GraphQLClient, scenes: [Scene],
+                           mutate: (Scene, inout SceneUpdateInput) -> Void) async -> (done: Int, failed: [String]) {
+        var done = 0
+        var failed: [String] = []
+        for s in scenes {
+            var input = SceneUpdateInput(id: s.id)
+            mutate(s, &input)
+            do {
+                try await updateScene(c, input: input)
+                done += 1
+            } catch {
+                if !NetError.isCancellation(error) {
+                    failed.append("\(s.title ?? "短片"): \(NetError.friendly(error))")
+                }
+            }
+        }
+        return (done, failed)
     }
 
     static func updatePerformer(_ c: GraphQLClient, input: PerformerUpdateInput) async throws {

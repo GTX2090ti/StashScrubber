@@ -118,6 +118,14 @@ struct ScenesView: View {
     @State private var anchor = ScrollMemory()
     @Environment(\.horizontalSizeClass) private var hSizeClass
 
+    // MARK: 批量操作（多选模式）
+    @State private var selectionMode = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var batchBusy = false
+    @State private var batchResult: String?
+    @State private var showBatchTagSheet = false
+    @State private var batchTagAction: BatchTagAction = .add
+
     /// 滚动容器坐标空间名（用于取各短片相对滚动内容的纵坐标）
     private static let scrollSpace = "scenes.scroll"
 
@@ -137,6 +145,23 @@ struct ScenesView: View {
                 // 的回调（滚动位置恢复会彻底失效）。修饰符必须挂在分支外的稳定层上。
                 ZStack { content }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if selectionMode { batchBar }
+                    }
+                    .alert("批量操作完成", isPresented: Binding(
+                        get: { batchResult != nil },
+                        set: { if !$0 { batchResult = nil } }
+                    )) {
+                        Button("好") { batchResult = nil }
+                    } message: {
+                        Text(batchResult ?? "")
+                    }
+                    .sheet(isPresented: $showBatchTagSheet) {
+                        BatchTagSheet(title: batchTagAction == .add ? "添加标签" : "移除标签") { picked in
+                            Task { await runBatchTags(picked) }
+                        }
+                        .environmentObject(settings)
+                    }
                     .navigationTitle("短片")
                     .searchable(text: $vm.query, prompt: "搜索短片标题 / 简介")
                     .onSubmit(of: .search) {
@@ -156,6 +181,21 @@ struct ScenesView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { ServerSwitcherMenu() }
                         ToolbarItemGroup(placement: .topBarTrailing) {
+                            if selectionMode {
+                                Button {
+                                    selectionMode = false
+                                    selectedIDs = []
+                                } label: {
+                                    Label("完成", systemImage: "checkmark.circle")
+                                }
+                            } else {
+                                Button {
+                                    selectionMode = true
+                                    selectedIDs = []
+                                } label: {
+                                    Label("选择", systemImage: "checkmark.circle")
+                                }
+                            }
                             Button {
                                 viewMode = (viewMode == "grid") ? "list" : "grid"
                                 anchor.clear()
@@ -279,6 +319,250 @@ struct ScenesView: View {
         .padding(.horizontal)
     }
 
+    // MARK: 批量操作（多选模式）
+
+    private enum BatchTagAction { case add, remove }
+
+    private var selectedScenes: [Scene] {
+        vm.scenes.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// 全部已收藏 → 操作显示为「取消收藏」
+    private var allSelectedOrganized: Bool {
+        let sel = selectedScenes
+        return !sel.isEmpty && sel.allSatisfy { $0.organized == true }
+    }
+
+    private func toggleSelect(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    private func selectionBadge(_ id: String) -> some View {
+        Image(systemName: selectedIDs.contains(id) ? "checkmark.circle.fill" : "circle")
+            .font(.title3)
+            .foregroundStyle(selectedIDs.contains(id) ? Color.appAccent : .white.opacity(0.85))
+            .padding(6)
+            .background(Circle().fill(Color.black.opacity(0.45)))
+            .padding(6)
+    }
+
+    private var batchBar: some View {
+        VStack(spacing: 0) {
+            if batchBusy {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在处理 \(selectedIDs.count) 个短片…")
+                        .font(.footnote)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(12)
+            } else {
+                HStack(spacing: 18) {
+                    Button {
+                        Task { await runBatchToggleOrganized() }
+                    } label: {
+                        Label(allSelectedOrganized ? "取消收藏" : "收藏",
+                              systemImage: allSelectedOrganized ? "star.slash" : "star")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+
+                    Menu {
+                        ForEach(1...10, id: \.self) { n in
+                            Button("\(n) ★") {
+                                Task { await runBatchRating(n * 20) }
+                            }
+                        }
+                        Button("清除评分", role: .destructive) {
+                            Task { await runBatchRating(nil) }
+                        }
+                    } label: {
+                        Label("评分", systemImage: "star.leadinghalf.filled")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+
+                    Menu {
+                        Button("添加标签…") {
+                            batchTagAction = .add
+                            showBatchTagSheet = true
+                        }
+                        Button("移除标签…") {
+                            batchTagAction = .remove
+                            showBatchTagSheet = true
+                        }
+                    } label: {
+                        Label("标签", systemImage: "tag")
+                    }
+                    .disabled(selectedIDs.isEmpty)
+
+                    Spacer()
+
+                    Text("已选 \(selectedIDs.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+            Divider()
+        }
+        .background(.bar)
+    }
+
+    private func runBatchToggleOrganized() async {
+        guard !selectedScenes.isEmpty else { return }
+        batchBusy = true
+        defer { batchBusy = false }
+        do {
+            let client = try settings.makeClient()
+            let target = !allSelectedOrganized
+            let r = await StashAPI.bulkUpdate(client, scenes: selectedScenes) { _, input in
+                input.organized = target
+            }
+            finishBatch(done: r.done, failed: r.failed,
+                        okText: target ? "已收藏 \(r.done) 个短片" : "已取消收藏 \(r.done) 个短片")
+        } catch {
+            vm.error = NetError.friendly(error)
+        }
+    }
+
+    private func runBatchRating(_ rating100: Int?) async {
+        guard !selectedScenes.isEmpty else { return }
+        batchBusy = true
+        defer { batchBusy = false }
+        do {
+            let client = try settings.makeClient()
+            let r = await StashAPI.bulkUpdate(client, scenes: selectedScenes) { _, input in
+                input.rating100 = rating100
+            }
+            finishBatch(done: r.done, failed: r.failed,
+                        okText: rating100 == nil ? "已清除评分（\(r.done) 个）" : "已设置评分（\(r.done) 个）")
+        } catch {
+            vm.error = NetError.friendly(error)
+        }
+    }
+
+    private func runBatchTags(_ tagIDs: Set<String>) async {
+        guard !selectedScenes.isEmpty, !tagIDs.isEmpty else { return }
+        batchBusy = true
+        defer { batchBusy = false }
+        do {
+            let client = try settings.makeClient()
+            let r: (done: Int, failed: [String])
+            if batchTagAction == .add {
+                r = await StashAPI.bulkUpdate(client, scenes: selectedScenes) { s, input in
+                    let existing = Set((s.tags ?? []).map(\.id))
+                    input.tagIds = existing.union(tagIDs).sorted()
+                }
+            } else {
+                r = await StashAPI.bulkUpdate(client, scenes: selectedScenes) { s, input in
+                    let existing = Set((s.tags ?? []).map(\.id))
+                    input.tagIds = existing.subtracting(tagIDs).sorted()
+                }
+            }
+            finishBatch(done: r.done, failed: r.failed,
+                        okText: "标签已更新（\(r.done) 个短片）")
+        } catch {
+            vm.error = NetError.friendly(error)
+        }
+    }
+
+    private func finishBatch(done: Int, failed: [String], okText: String) {
+        if failed.isEmpty {
+            batchResult = okText
+        } else {
+            batchResult = "\(okText)；失败 \(failed.count) 个：\n" + failed.prefix(5).joined(separator: "\n")
+        }
+        selectionMode = false
+        selectedIDs = []
+        // 刷新当前页以更新收藏 / 标签状态
+        Task { await vm.reload() }
+    }
+
+    /// 批量标签选择页：列出全部标签，多选后回调
+    private struct BatchTagSheet: View {
+        let title: String
+        let onConfirm: (Set<String>) -> Void
+        @EnvironmentObject private var settings: AppSettings
+        @Environment(\.dismiss) private var dismiss
+
+        @State private var allTags: [Tag] = []
+        @State private var loading = false
+        @State private var error: String?
+        @State private var picked: Set<String> = []
+
+        var body: some View {
+            NavigationStack {
+                Group {
+                    if loading && allTags.isEmpty {
+                        ProgressView("加载标签…")
+                    } else if let error, allTags.isEmpty {
+                        EmptyStateView(title: "加载失败", hint: error)
+                    } else if allTags.isEmpty {
+                        EmptyStateView(title: "没有标签", hint: "先在 Stash 创建标签再批量操作")
+                    } else {
+                        List(filteredTags) { t in
+                            Button {
+                                if picked.contains(t.id) {
+                                    picked.remove(t.id)
+                                } else {
+                                    picked.insert(t.id)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(t.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if picked.contains(t.id) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Color.appAccent)
+                                    }
+                                }
+                            }
+                        }
+                        .searchable(text: $searchText, prompt: "搜索标签")
+                    }
+                }
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("确定（\(picked.count)）") {
+                            onConfirm(picked)
+                            dismiss()
+                        }
+                        .disabled(picked.isEmpty)
+                    }
+                }
+            }
+            .task { await load() }
+        }
+
+        @State private var searchText = ""
+
+        private var filteredTags: [Tag] {
+            guard !searchText.isEmpty else { return allTags }
+            return allTags.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        }
+
+        private func load() async {
+            loading = true
+            defer { loading = false }
+            do {
+                let client = try settings.makeClient()
+                allTags = try await StashAPI.allTags(client)
+            } catch {
+                self.error = NetError.friendly(error)
+            }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if vm.loading && vm.scenes.isEmpty {
@@ -324,10 +608,20 @@ struct ScenesView: View {
                     // 海报网格：一排固定 3 个竖版 2:3 海报卡片
                     LazyVGrid(columns: gridColumns, spacing: 18) {
                         ForEach(vm.scenes) { s in
-                            NavigationLink(value: s.id) {
-                                SceneCard(scene: s)
+                            if selectionMode {
+                                Button {
+                                    toggleSelect(s.id)
+                                } label: {
+                                    SceneCard(scene: s)
+                                        .overlay(alignment: .topTrailing) { selectionBadge(s.id) }
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                NavigationLink(value: s.id) {
+                                    SceneCard(scene: s)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                             .id(s.id)
                             .background(scrollProbe(s.id))
                         }
@@ -337,10 +631,20 @@ struct ScenesView: View {
                     // 列表模式：左图右文整行卡片
                     LazyVStack(spacing: 0) {
                         ForEach(vm.scenes) { s in
-                            NavigationLink(value: s.id) {
-                                SceneRow(scene: s)
+                            if selectionMode {
+                                Button {
+                                    toggleSelect(s.id)
+                                } label: {
+                                    SceneRow(scene: s)
+                                        .overlay(alignment: .trailing) { selectionBadge(s.id) }
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                NavigationLink(value: s.id) {
+                                    SceneRow(scene: s)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                             .id(s.id)
                             .background(scrollProbe(s.id))
                             Divider()
