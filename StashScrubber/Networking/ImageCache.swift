@@ -76,6 +76,37 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
     private var failedAt: [String: Date] = [:]
     private static let failureCooldown: TimeInterval = 20
 
+    // MARK: 下载并发门控与图片会话健康（v1.5.47）
+    //
+    // 「快速翻页卡住、重开 App 就好」的真因：翻页一次就触发整页封面下载，
+    // URLSession 图片会话每 host 只有 6 个连接，连续翻页时大量请求挤在同一连接池，
+    // 部分连接变半开死连接后被新请求复用 → 挂起转圈；重启 App 重建会话即恢复。
+    // 两层防御：
+    //   ① 全局并发门：同一时刻最多 6 个图片网络下载（与连接数一致，队列化而非打爆连接池）
+    //   ② 连续 3 次真实失败（非取消）→ 主动重建图片会话，不等 35s 硬超时
+    private static let maxConcurrentDownloads = 6
+    private static let downloadGate = DownloadGate(max: maxConcurrentDownloads)
+
+    private static let healthLock = NSLock()
+    private static var consecutiveImageFailures = 0
+    private static let failureThreshold = 3
+
+    /// 并发门：信号量语义的 actor，acquire 满员时挂起等待
+    private actor DownloadGate {
+        private let max: Int
+        private var active = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        init(max: Int) { self.max = max }
+        func acquire() async {
+            if active < max { active += 1; return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+        func release() {
+            if !waiters.isEmpty { waiters.removeFirst().resume() }
+            else { active -= 1 }
+        }
+    }
+
     /// 仅在 io 队列访问
     private var bytesSinceTrim: Int64 = 0
     private var lastTrimAt = Date.distantPast
@@ -131,7 +162,10 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
         let outcome = await fetchData(url: url, apiKey: apiKey, key: key)
         guard let data = outcome.data else {
             // 取消（视图滚走 / 页面切换）不吃冷却；真实失败才进冷却，避免反复重拉坏图
-            if outcome.error != nil { markFailure(key) }
+            if outcome.error != nil {
+                markFailure(key)
+                recordFailure()
+            }
             return nil
         }
         guard let img = UIImage(data: data) else {
@@ -153,6 +187,7 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
             return nil
         }
         clearFailure(key)
+        recordSuccess()
         if Self.isEnabled {
             store(img, cost: Self.cost(of: img), key: key)
             writeToDisk(data: data, key: key)
@@ -191,6 +226,8 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
             return t
         }
         let t = Task<DownloadOutcome, Never> { [weak self] in
+            await Self.downloadGate.acquire()
+            defer { Task { await Self.downloadGate.release() } }
             let outcome = await Self.download(url: url, apiKey: apiKey)
             _ = self?.finishFlight(key)
             return outcome
@@ -218,6 +255,30 @@ final class ImageCache: ObservableObject, @unchecked Sendable {
         failedAt[key] = Date()
         if failedAt.count > 400 { failedAt.removeAll() }
         flightLock.unlock()
+    }
+
+    // MARK: 图片会话健康（v1.5.47）
+
+    /// 图片下载真实失败计数 +1，连续达到阈值即主动重建图片会话（丢弃吊死连接）。
+    /// 只在主线程访问（image(for:) 均在 SwiftUI 视图上下文中调用），故直接用锁保护。
+    private func recordFailure() {
+        Self.healthLock.lock()
+        Self.consecutiveImageFailures += 1
+        let n = Self.consecutiveImageFailures
+        Self.healthLock.unlock()
+        if n >= Self.failureThreshold {
+            Self.healthLock.lock()
+            Self.consecutiveImageFailures = 0
+            Self.healthLock.unlock()
+            NetTransport.resetImage(reason: "图片连续 \(n) 次失败，连接池疑似吊死，重建图片会话")
+        }
+    }
+
+    /// 图片下载成功：清零连续失败计数
+    private func recordSuccess() {
+        Self.healthLock.lock()
+        Self.consecutiveImageFailures = 0
+        Self.healthLock.unlock()
     }
 
     private func clearFailure(_ key: String) {
