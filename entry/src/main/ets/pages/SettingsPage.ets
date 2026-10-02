@@ -3,7 +3,7 @@ import { NetLog } from '../net/NetLog';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 
-// 设置页：档案信息、网络日志、重置配置、版本
+// 设置页（鸿蒙官方分组列表风格）
 @Component
 export struct SettingsPage {
   onReset: () => void = () => {
@@ -35,144 +35,112 @@ export struct SettingsPage {
   }
 
   build() {
-    Scroll() {
-      Column({ space: 16 }) {
-        Text('设置')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#F9FAFB')
+    List() {
+      ListItemGroup({ header: this.groupHeader('当前服务器') }) {
+        ListItem() {
+          Column({ space: 4 }) {
+            Text(this.currentProfileLabel()).fontSize(14).width('100%').lineHeight(20)
+            Text('切换/编辑服务器请返回登录页重新配置')
+              .fontSize(12)
+              .fontColor('#999999')
+              .width('100%')
+          }
           .width('100%')
-          .margin({ top: 16 })
-
-        // 当前档案
-        Column({ space: 10 }) {
-          Text('当前服务器')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#E5E7EB')
-            .width('100%')
-          Text(this.currentProfileLabel())
-            .fontSize(13)
-            .fontColor('#E5E7EB')
-            .width('100%')
-            .lineHeight(20)
-          Text('切换/编辑服务器请返回登录页重新配置')
-            .fontSize(11)
-            .fontColor('#6B7280')
-            .width('100%')
+          .padding({ top: 8, bottom: 8 })
+          .alignItems(HorizontalAlign.Start)
         }
-        .width('100%')
-        .padding(14)
-        .backgroundColor('#131318')
-        .borderRadius(12)
-        .alignItems(HorizontalAlign.Start)
+      }
 
-        // 网络日志
-        Column({ space: 10 }) {
-          Text('网络日志')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#E5E7EB')
-            .width('100%')
+      ListItemGroup({ header: this.groupHeader('网络日志') }) {
+        ListItem() {
           Text('记录每次 GraphQL 请求的结果，可一键复制用于排障')
-            .fontSize(11)
-            .fontColor('#6B7280')
+            .fontSize(13)
+            .fontColor('#666666')
             .width('100%')
-          Row({ space: 8 }) {
-            Button(this.showLog ? '收起日志' : '查看日志')
+            .padding({ top: 8, bottom: 8 })
+        }
+        ListItem() {
+          Row({ space: 10 }) {
+            Button(this.showLog ? '收起日志' : '查看日志', { type: ButtonType.Normal })
               .fontSize(13)
               .height(36)
-              .fontColor('#D1D5DB')
-              .backgroundColor('#1F2937')
-              .borderRadius(8)
+              .layoutWeight(1)
               .onClick(() => {
                 this.showLog = !this.showLog;
                 if (this.showLog) {
                   this.logText = NetLog.instance.exportText();
                 }
               })
-            Button('复制日志')
+            Button('复制日志', { type: ButtonType.Normal })
               .fontSize(13)
               .height(36)
-              .fontColor('#D1D5DB')
-              .backgroundColor('#1F2937')
-              .borderRadius(8)
+              .layoutWeight(1)
               .onClick(() => {
                 this.copyLog();
               })
           }
           .width('100%')
-          if (this.showLog) {
+          .padding({ top: 4, bottom: 4 })
+        }
+        if (this.showLog) {
+          ListItem() {
             Text(this.logText)
               .fontSize(11)
-              .fontColor('#9CA3AF')
+              .fontColor('#666666')
               .width('100%')
               .maxLines(12)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
         }
-        .width('100%')
-        .padding(14)
-        .backgroundColor('#131318')
-        .borderRadius(12)
-        .alignItems(HorizontalAlign.Start)
+      }
 
-        // 账号
-        Column({ space: 10 }) {
-          Text('账号')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#E5E7EB')
-            .width('100%')
+      ListItemGroup({ header: this.groupHeader('账号') }) {
+        ListItem() {
           Button('重置服务器配置（返回登录页）')
             .fontSize(14)
             .height(44)
             .width('100%')
-            .fontColor('#FCA5A5')
-            .backgroundColor('#3B1D1D')
+            .fontColor('#D94838')
+            .backgroundColor('#FDF0EF')
             .borderRadius(10)
             .onClick(() => {
               this.resetConfig();
             })
         }
-        .width('100%')
-        .padding(14)
-        .backgroundColor('#131318')
-        .borderRadius(12)
-        .alignItems(HorizontalAlign.Start)
-
-        // 说明
-        Column({ space: 10 }) {
-          Text('说明')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#E5E7EB')
-            .width('100%')
-          Row() {
-            Text('版本').fontSize(13).fontColor('#E5E7EB')
-            Blank()
-            Text(this.version).fontSize(13).fontColor('#9CA3AF')
-          }
-          .width('100%')
-          Row() {
-            Text('适配').fontSize(13).fontColor('#E5E7EB')
-            Blank()
-            Text('HarmonyOS 6+ · 纯血鸿蒙 NEXT').fontSize(13).fontColor('#9CA3AF')
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .padding(14)
-        .backgroundColor('#131318')
-        .borderRadius(12)
-        .alignItems(HorizontalAlign.Start)
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 32 })
-      .alignItems(HorizontalAlign.Start)
+
+      ListItemGroup({ header: this.groupHeader('说明') }) {
+        ListItem() {
+          Row() {
+            Text('版本').fontSize(14)
+            Blank()
+            Text(this.version).fontSize(14).fontColor('#666666')
+          }
+          .width('100%')
+          .height(44)
+        }
+        ListItem() {
+          Row() {
+            Text('适配').fontSize(14)
+            Blank()
+            Text('HarmonyOS 6+ · 纯血鸿蒙 NEXT').fontSize(14).fontColor('#666666')
+          }
+          .width('100%')
+          .height(44)
+        }
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#0B0B0F')
+    .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  private groupHeader(text: string) {
+    Text(text)
+      .fontSize(13)
+      .fontColor('#666666')
+      .width('100%')
+      .padding({ left: 16, top: 14, bottom: 6 })
   }
 }

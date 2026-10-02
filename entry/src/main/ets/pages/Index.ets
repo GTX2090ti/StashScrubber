@@ -29,17 +29,17 @@ struct Index {
         TabContent() {
           SceneListPage()
         }
-        .tabBar(this.tabItem('短片', '▶'))
+        .tabBar(this.tabItem('短片', '▶', this.currentTab === 0))
 
         TabContent() {
           PerformerListPage()
         }
-        .tabBar(this.tabItem('演员', '◉'))
+        .tabBar(this.tabItem('演员', '◉', this.currentTab === 1))
 
         TabContent() {
           StudioListPage()
         }
-        .tabBar(this.tabItem('工作室', '🏢'))
+        .tabBar(this.tabItem('工作室', '🏢', this.currentTab === 2))
 
         TabContent() {
           SettingsPage({
@@ -48,11 +48,10 @@ struct Index {
             }
           })
         }
-        .tabBar(this.tabItem('设置', '⚙'))
+        .tabBar(this.tabItem('设置', '⚙', this.currentTab === 3))
       }
       .barMode(BarMode.Fixed)
       .barHeight(56)
-      .backgroundColor('#0B0B0F')
       .onChange((index: number) => {
         this.currentTab = index;
       })
@@ -62,14 +61,13 @@ struct Index {
   }
 
   @Builder
-  private tabItem(label: string, symbol: string) {
+  private tabItem(label: string, symbol: string, active: boolean) {
     Column({ space: 3 }) {
       Text(symbol)
         .fontSize(18)
-        .fontColor('#D1D5DB')
       Text(label)
         .fontSize(11)
-        .fontColor('#9CA3AF')
+        .fontColor(active ? '#1E5EFF' : '#999999')
     }
     .width('100%')
     .height('100%')

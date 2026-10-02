@@ -1,8 +1,8 @@
 import router from '@ohos.router';
-import { Studio, StudioPage, FindStudiosResp } from '../model/Models';
+import { Studio, FindStudiosResp } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 
-// 工作室列表页：行式列表 + 翻页 + 搜索
+// 工作室列表页：行式列表 + 翻页 + 搜索（鸿蒙官方风格）
 @Component
 export struct StudioListPage {
   @State private studios: Studio[] = [];
@@ -79,12 +79,9 @@ export struct StudioListPage {
   @Builder
   private pageBar() {
     Row() {
-      Button('上一页')
+      Button('上一页', { type: ButtonType.Normal })
         .fontSize(13)
         .height(34)
-        .fontColor('#D1D5DB')
-        .backgroundColor('#1F2937')
-        .borderRadius(8)
         .enabled(this.canPrev && !this.loading)
         .onClick(() => {
           this.goToPage(this.currentPage - 1);
@@ -92,14 +89,11 @@ export struct StudioListPage {
       Blank()
       Text('第 ' + this.currentPage + ' / ' + this.totalPages + ' 页（共 ' + this.total + '）')
         .fontSize(12)
-        .fontColor('#9CA3AF')
+        .fontColor('#666666')
       Blank()
-      Button('下一页')
+      Button('下一页', { type: ButtonType.Normal })
         .fontSize(13)
         .height(34)
-        .fontColor('#D1D5DB')
-        .backgroundColor('#1F2937')
-        .borderRadius(8)
         .enabled(this.canNext && !this.loading)
         .onClick(() => {
           this.goToPage(this.currentPage + 1);
@@ -116,7 +110,6 @@ export struct StudioListPage {
           .fontSize(14)
           .height(40)
           .layoutWeight(1)
-          .backgroundColor('#16161E')
           .borderRadius(8)
           .onChange((v: string) => {
             this.query = v;
@@ -124,12 +117,9 @@ export struct StudioListPage {
           .onSubmit(() => {
             this.reload();
           })
-        Button('搜索')
+        Button('搜索', { type: ButtonType.Capsule })
           .fontSize(13)
-          .height(40)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#3B82F6')
-          .borderRadius(8)
+          .height(36)
           .onClick(() => {
             this.reload();
           })
@@ -141,8 +131,8 @@ export struct StudioListPage {
 
       if (this.loading && this.studios.length === 0) {
         Column({ space: 10 }) {
-          LoadingProgress().width(40).height(40).color('#3B82F6')
-          Text('加载中…').fontSize(13).fontColor('#9CA3AF')
+          LoadingProgress().width(40).height(40)
+          Text('加载中…').fontSize(13).fontColor('#666666')
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
@@ -150,13 +140,10 @@ export struct StudioListPage {
         Column({ space: 10 }) {
           Text(this.error !== '' ? this.error : '没有工作室')
             .fontSize(14)
-            .fontColor('#9CA3AF')
-          Button('重试')
+            .fontColor('#666666')
+          Button('重试', { type: ButtonType.Capsule })
             .fontSize(13)
             .height(34)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#3B82F6')
-            .borderRadius(8)
             .onClick(() => {
               this.reload();
             })
@@ -164,7 +151,7 @@ export struct StudioListPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        List({ space: 10 }) {
+        List({ space: 2 }) {
           ForEach(this.studios, (s: Studio) => {
             ListItem() {
               Row({ space: 12 }) {
@@ -174,25 +161,22 @@ export struct StudioListPage {
                   Text(s.name)
                     .fontSize(16)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#F9FAFB')
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                   if (s.scene_count !== undefined && s.scene_count !== null) {
                     Text('短片数：' + s.scene_count.toString())
                       .fontSize(12)
-                      .fontColor('#9CA3AF')
+                      .fontColor('#999999')
                   }
                 }
                 .layoutWeight(1)
                 .alignItems(HorizontalAlign.Start)
                 Text('›')
                   .fontSize(22)
-                  .fontColor('#6B7280')
+                  .fontColor('#CCCCCC')
               }
               .width('100%')
-              .padding(14)
-              .backgroundColor('#16161E')
-              .borderRadius(12)
+              .height(56)
               .onClick(() => {
                 this.openStudio(s.id);
               })
@@ -201,7 +185,7 @@ export struct StudioListPage {
         }
         .layoutWeight(1)
         .width('100%')
-        .padding({ left: 12, right: 12 })
+        .padding({ left: 16, right: 16 })
         .scrollBar(BarState.Off)
       }
 
@@ -209,6 +193,5 @@ export struct StudioListPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#0B0B0F')
   }
 }

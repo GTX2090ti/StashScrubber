@@ -4,6 +4,11 @@
     "pages/SceneDetailPage",
     "pages/PerformerDetailPage",
     "pages/StudioDetailPage",
-    "pages/TagDetailPage"
+    "pages/TagDetailPage",
+    "pages/SceneEditPage",
+    "pages/PerformerEditPage",
+    "pages/PerformerCreatePage",
+    "pages/ScrapePage",
+    "pages/MergePage"
   ]
 }

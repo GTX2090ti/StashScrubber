@@ -1,9 +1,9 @@
 import router from '@ohos.router';
-import { Performer, PerformerPage, FindPerformersResp, rewriteImage } from '../model/Models';
+import { Performer, FindPerformersResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
-// 演员列表页：头像网格 + 翻页 + 搜索
+// 演员列表页：头像网格 + 翻页 + 搜索 + 手动添加演员
 @Component
 export struct PerformerListPage {
   @State private performers: Performer[] = [];
@@ -84,6 +84,10 @@ export struct PerformerListPage {
     router.pushUrl({ url: 'pages/PerformerDetailPage', params: { 'id': id } });
   }
 
+  private openCreate(): void {
+    router.pushUrl({ url: 'pages/PerformerCreatePage' });
+  }
+
   private avatarUrl(p: Performer): string {
     if (p.image_path === undefined || p.image_path === null || p.image_path === '') {
       return '';
@@ -94,12 +98,9 @@ export struct PerformerListPage {
   @Builder
   private pageBar() {
     Row() {
-      Button('上一页')
+      Button('上一页', { type: ButtonType.Normal })
         .fontSize(13)
         .height(34)
-        .fontColor('#D1D5DB')
-        .backgroundColor('#1F2937')
-        .borderRadius(8)
         .enabled(this.canPrev && !this.loading)
         .onClick(() => {
           this.goToPage(this.currentPage - 1);
@@ -107,14 +108,11 @@ export struct PerformerListPage {
       Blank()
       Text('第 ' + this.currentPage + ' / ' + this.totalPages + ' 页（共 ' + this.total + '）')
         .fontSize(12)
-        .fontColor('#9CA3AF')
+        .fontColor('#666666')
       Blank()
-      Button('下一页')
+      Button('下一页', { type: ButtonType.Normal })
         .fontSize(13)
         .height(34)
-        .fontColor('#D1D5DB')
-        .backgroundColor('#1F2937')
-        .borderRadius(8)
         .enabled(this.canNext && !this.loading)
         .onClick(() => {
           this.goToPage(this.currentPage + 1);
@@ -131,7 +129,6 @@ export struct PerformerListPage {
           .fontSize(14)
           .height(40)
           .layoutWeight(1)
-          .backgroundColor('#16161E')
           .borderRadius(8)
           .onChange((v: string) => {
             this.query = v;
@@ -139,14 +136,17 @@ export struct PerformerListPage {
           .onSubmit(() => {
             this.reload();
           })
-        Button('搜索')
+        Button('搜索', { type: ButtonType.Capsule })
           .fontSize(13)
-          .height(40)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#3B82F6')
-          .borderRadius(8)
+          .height(36)
           .onClick(() => {
             this.reload();
+          })
+        Button('+ 添加', { type: ButtonType.Capsule })
+          .fontSize(13)
+          .height(36)
+          .onClick(() => {
+            this.openCreate();
           })
       }
       .width('100%')
@@ -156,8 +156,8 @@ export struct PerformerListPage {
 
       if (this.loading && this.performers.length === 0) {
         Column({ space: 10 }) {
-          LoadingProgress().width(40).height(40).color('#3B82F6')
-          Text('加载中…').fontSize(13).fontColor('#9CA3AF')
+          LoadingProgress().width(40).height(40)
+          Text('加载中…').fontSize(13).fontColor('#666666')
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
@@ -165,13 +165,10 @@ export struct PerformerListPage {
         Column({ space: 10 }) {
           Text(this.error !== '' ? this.error : '没有演员')
             .fontSize(14)
-            .fontColor('#9CA3AF')
-          Button('重试')
+            .fontColor('#666666')
+          Button('重试', { type: ButtonType.Capsule })
             .fontSize(13)
             .height(34)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#3B82F6')
-            .borderRadius(8)
             .onClick(() => {
               this.reload();
             })
@@ -191,20 +188,19 @@ export struct PerformerListPage {
                         .width('100%')
                         .height('100%')
                     } else {
-                      Text(p.name.substring(0, 1))
+                      Text(p.name.length > 0 ? p.name.substring(0, 1) : '?')
                         .fontSize(22)
-                        .fontColor('#9CA3AF')
+                        .fontColor('#999999')
                     }
                   }
                   .width('100%')
                   .aspectRatio(1)
                   .clip(true)
                   .borderRadius(10)
-                  .backgroundColor('#16161E')
+                  .backgroundColor('#F2F2F2')
 
                   Text(p.name)
                     .fontSize(11)
-                    .fontColor('#E5E7EB')
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .width('100%')
@@ -231,6 +227,5 @@ export struct PerformerListPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#0B0B0F')
   }
 }

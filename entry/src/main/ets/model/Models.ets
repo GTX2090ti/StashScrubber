@@ -97,6 +97,122 @@ export interface FindTagResp {
   findTag?: Tag;
 }
 
+// ---------- 削刮 ----------
+
+export interface Scraper {
+  id: string;
+  name: string;
+  scene?: ScraperCap;
+  performer?: ScraperCap;
+}
+
+export interface ScraperCap {
+  supported_scrapes?: string[];
+}
+
+export interface StashBoxInfo {
+  name?: string;
+  endpoint?: string;
+}
+
+export interface ScrapedStudio {
+  stored_id?: string;
+  name?: string;
+  urls?: string[];
+  image?: string;
+}
+
+export interface ScrapedTag {
+  stored_id?: string;
+  name?: string;
+}
+
+export interface ScrapedPerformer {
+  stored_id?: string;
+  name?: string;
+  disambiguation?: string;
+  aliases?: string[];
+  birthdate?: string;
+  gender?: string;
+  country?: string;
+  ethnicity?: string;
+  hair_color?: string;
+  eye_color?: string;
+  height?: string;
+  weight?: string;
+  measurements?: string;
+  fake_tits?: string;
+  tattoos?: string;
+  piercings?: string;
+  career_start?: string;
+  career_end?: string;
+  details?: string;
+  urls?: string[];
+  images?: string[];
+  tags?: ScrapedTag[];
+}
+
+export interface ScrapedScene {
+  title?: string;
+  details?: string;
+  date?: string;
+  duration?: number;
+  urls?: string[];
+  image?: string;
+  studio?: ScrapedStudio;
+  performers?: ScrapedPerformer[];
+  tags?: ScrapedTag[];
+}
+
+// 削刮 / 分类 响应外壳
+export interface ListScrapersResp {
+  listScrapers?: Scraper[];
+}
+
+export interface StashBoxesResp {
+  configuration?: StashBoxConf;
+}
+
+export interface StashBoxConf {
+  general?: StashBoxGeneral;
+}
+
+export interface StashBoxGeneral {
+  stashBoxes?: StashBoxInfo[];
+}
+
+export interface ScrapeSingleSceneResp {
+  scrapeSingleScene?: (ScrapedScene | null)[];
+}
+
+export interface ScrapeSceneURLResp {
+  scrapeSceneURL?: ScrapedScene | null;
+}
+
+export interface ScrapeSinglePerformerResp {
+  scrapeSinglePerformer?: (ScrapedPerformer | null)[];
+}
+
+export interface ScrapePerformerURLResp {
+  scrapePerformerURL?: ScrapedPerformer | null;
+}
+
+export interface ScrapeSingleStudioResp {
+  scrapeSingleStudio?: ScrapedStudio | null;
+}
+
+export interface AllStudiosResp {
+  allStudios?: Studio[];
+}
+
+export interface AllPerformersResp {
+  allPerformers?: Performer[];
+}
+
+export interface AllTagsResp {
+  allTags?: Tag[];
+}
+
 // 图片地址重写：主机与当前档案不一致时改写为「档案基址 + 原路径」
 export function rewriteImage(raw: string, base: string): string {
   if (raw === '') {

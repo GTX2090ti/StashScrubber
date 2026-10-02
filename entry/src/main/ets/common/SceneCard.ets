@@ -1,6 +1,6 @@
 import { Scene, rewriteImage } from '../model/Models';
 
-// 短片卡片（网格海报样式）
+// 短片卡片（鸿蒙官方风格：浅底占位 + 系统文字色）
 @Component
 export struct SceneCard {
   @Prop scene: Scene;
@@ -33,23 +33,22 @@ export struct SceneCard {
             })
         } else {
           Column() {
-            Image($r('app.media.startIcon'))
-              .width(28)
-              .height(28)
-              .opacity(0.5)
+            Text('无封面')
+              .fontSize(11)
+              .fontColor('#999999')
           }
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#16161E')
+          .backgroundColor('#F2F2F2')
         }
         // 收藏角标
         if (this.scene.organized === true) {
           Text('★')
             .fontSize(14)
-            .fontColor('#F59E0B')
+            .fontColor('#FF9500')
             .padding(4)
-            .backgroundColor('#00000066')
+            .backgroundColor('#66FFFFFF')
             .borderRadius(8)
             .position({ x: '78%', y: 4 })
         }
@@ -59,7 +58,7 @@ export struct SceneCard {
             .fontSize(11)
             .fontColor('#FFFFFF')
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .backgroundColor('#00000088')
+            .backgroundColor('#88000000')
             .borderRadius(6)
             .position({ x: 4, y: 4 })
         }
@@ -68,12 +67,11 @@ export struct SceneCard {
       .aspectRatio(2 / 3)
       .clip(true)
       .borderRadius(10)
-      .backgroundColor('#1A1A22')
+      .backgroundColor('#F2F2F2')
 
       // 标题
       Text(this.scene.title !== undefined && this.scene.title !== '' ? this.scene.title : '（无标题）')
         .fontSize(12)
-        .fontColor('#E5E7EB')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')

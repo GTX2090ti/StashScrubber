@@ -85,15 +85,14 @@ export struct LoginPage {
 
   build() {
     Column({ space: 14 }) {
-      Text('StashScrubber')
-        .fontSize(26)
+      Text('Stash')
+        .fontSize(28)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#F9FAFB')
         .margin({ top: 60, bottom: 8 })
 
       Text('配置 Stash 服务器（支持内网/外网双地址）')
         .fontSize(13)
-        .fontColor('#9CA3AF')
+        .fontColor('#666666')
         .margin({ bottom: 24 })
 
       this.inputField('档案名称', '例如：家里', (v: string) => {
@@ -113,13 +112,10 @@ export struct LoginPage {
       }, this.apiKey, true)
 
       // 测试连接
-      Button(this.testing ? '测试中…' : '测试连接')
+      Button(this.testing ? '测试中…' : '测试连接', { type: ButtonType.Capsule })
         .width('100%')
         .height(44)
         .fontSize(16)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#3B82F6')
-        .borderRadius(10)
         .enabled(!this.testing && !this.saving)
         .onClick(() => {
           this.testConnection();
@@ -129,19 +125,16 @@ export struct LoginPage {
       if (this.testResult !== '') {
         Text(this.testResult)
           .fontSize(13)
-          .fontColor(this.testOk ? '#34D399' : '#F87171')
+          .fontColor(this.testOk ? '#2A8C5A' : '#D94838')
           .textAlign(TextAlign.Center)
           .width('100%')
       }
 
       // 保存
-      Button(this.saving ? '保存中…' : '保存并进入')
+      Button(this.saving ? '保存中…' : '保存并进入', { type: ButtonType.Capsule })
         .width('100%')
         .height(44)
         .fontSize(16)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#10B981')
-        .borderRadius(10)
         .enabled(!this.testing && !this.saving)
         .onClick(() => {
           this.save();
@@ -152,7 +145,6 @@ export struct LoginPage {
     .width('100%')
     .height('100%')
     .padding({ left: 24, right: 24 })
-    .backgroundColor('#0B0B0F')
   }
 
   @Builder
@@ -160,15 +152,12 @@ export struct LoginPage {
     Column({ space: 6 }) {
       Text(label)
         .fontSize(13)
-        .fontColor('#9CA3AF')
+        .fontColor('#666666')
         .width('100%')
       TextInput({ placeholder: placeholder, text: value })
         .type(isPassword ? InputType.Password : InputType.Normal)
         .fontSize(15)
-        .fontColor('#F9FAFB')
-        .placeholderColor('#6B7280')
         .height(46)
-        .backgroundColor('#16161E')
         .borderRadius(10)
         .onChange((v: string) => {
           onChange(v);

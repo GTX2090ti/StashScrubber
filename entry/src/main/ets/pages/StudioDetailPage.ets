@@ -3,7 +3,7 @@ import { Studio, FindStudioResp, rewriteImage } from '../model/Models';
 import { makeClient } from '../net/GraphQLClient';
 import { AppSettings } from '../net/AppSettings';
 
-// 工作室详情页
+// 工作室详情页（鸿蒙官方组件风格）
 @Entry
 @Component
 struct StudioDetailPage {
@@ -17,10 +17,16 @@ struct StudioDetailPage {
     if (params !== null && params['id'] !== undefined) {
       this.studioId = params['id'];
     }
+  }
+
+  onPageShow(): void {
     this.load();
   }
 
   private async load(): Promise<void> {
+    if (this.studioId === '') {
+      return;
+    }
     this.loading = true;
     this.error = '';
     try {
@@ -49,35 +55,38 @@ struct StudioDetailPage {
     return rewriteImage(s.image_path, AppSettings.instance.activeBaseURL());
   }
 
+  private openScrape(): void {
+    const name = this.studio !== null && this.studio.name !== undefined ? this.studio.name : '';
+    router.pushUrl({
+      url: 'pages/ScrapePage',
+      params: { 'kind': 'studio', 'id': this.studioId, 'title': name }
+    });
+  }
+
   build() {
-    Column() {
+    Navigation() {
       if (this.loading) {
         Column({ space: 10 }) {
-          LoadingProgress().width(40).height(40).color('#3B82F6')
-          Text('加载中…').fontSize(13).fontColor('#9CA3AF')
+          LoadingProgress().width(40).height(40)
+          Text('加载中…').fontSize(13)
         }
-        .layoutWeight(1)
+        .width('100%')
+        .height('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.studio === null) {
         Column({ space: 10 }) {
-          Text(this.error !== '' ? this.error : '加载失败')
-            .fontSize(14)
-            .fontColor('#F87171')
-          Button('重试')
+          Text(this.error !== '' ? this.error : '加载失败').fontSize(14)
+          Button('重试', { type: ButtonType.Capsule })
             .fontSize(13)
             .height(34)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#3B82F6')
-            .borderRadius(8)
-            .onClick(() => {
-              this.load();
-            })
+            .onClick(() => { this.load() })
         }
-        .layoutWeight(1)
+        .width('100%')
+        .height('100%')
         .justifyContent(FlexAlign.Center)
       } else {
         Scroll() {
-          Column({ space: 14 }) {
+          Column({ space: 12 }) {
             // 图标
             Stack() {
               if (this.imageUrl !== '') {
@@ -92,44 +101,57 @@ struct StudioDetailPage {
                   .width(120)
                   .height(120)
                   .textAlign(TextAlign.Center)
-                  .backgroundColor('#16161E')
+                  .backgroundColor('#F2F2F2')
                   .borderRadius(60)
               }
             }
             .width('100%')
             .alignContent(Alignment.Center)
+            .margin({ top: 8 })
 
             Text(this.studio.name)
               .fontSize(22)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#F9FAFB')
               .width('100%')
               .textAlign(TextAlign.Center)
 
             if (this.studio.scene_count !== undefined && this.studio.scene_count !== null) {
               Text('短片数：' + this.studio.scene_count.toString())
                 .fontSize(13)
-                .fontColor('#9CA3AF')
+                .fontColor('#666666')
                 .width('100%')
                 .textAlign(TextAlign.Center)
             }
             if (this.studio.rating100 !== undefined && this.studio.rating100 !== null && this.studio.rating100 > 0) {
-              Text('评分：' + (this.studio.rating100 / 20).toFixed(1) + ' ★')
+              Text('评分：' + (this.studio.rating100 / 20).toFixed(1) + ' / 5.0')
                 .fontSize(13)
-                .fontColor('#9CA3AF')
+                .fontColor('#666666')
                 .width('100%')
                 .textAlign(TextAlign.Center)
             }
+
+            // 操作
+            Button('削刮（Stash-box）', { type: ButtonType.Normal })
+              .fontSize(15)
+              .width('100%')
+              .height(42)
+              .margin({ top: 14 })
+              .onClick(() => { this.openScrape() })
           }
           .width('100%')
           .padding(16)
         }
-        .layoutWeight(1)
-        .scrollBar(BarState.Off)
+        .width('100%')
+        .height('100%')
+        .align(Alignment.Top)
       }
     }
+    .title(this.studio !== null && this.studio.name !== undefined ? this.studio.name : '工作室详情')
+    .hideTitleBar(false)
+    .menus([
+      { value: '削刮', action: () => { this.openScrape() } }
+    ])
     .width('100%')
     .height('100%')
-    .backgroundColor('#0B0B0F')
   }
 }
