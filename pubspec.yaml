@@ -1,0 +1,25 @@
+name: stash_scrubber_flutter
+description: Stash media server client (Flutter for HarmonyOS).
+publish_to: 'none'
+version: 1.6.46+556
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.2.0
+  shared_preferences: ^2.3.0
+  shared_preferences_ohos: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

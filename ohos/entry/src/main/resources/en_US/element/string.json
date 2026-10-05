@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "StashScrubber module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "StashScrubber entry"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Stash"
+    }
+  ]
+}

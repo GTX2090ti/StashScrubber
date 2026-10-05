@@ -1,14 +1,60 @@
-/node_modules
-/oh_modules
-/local.properties
-/.idea
-**/build
-/.hvigor
-.cxx
-/.clangd
-/.clang-format
-/.clang-tidy
-**/.test
-/.appanalyzer
-**/oh-package-lock.json5
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
 .DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# HarmonyOS / hvigor build artifacts
+ohos/.hvigor/
+ohos/.codegenie/
+ohos/HoKit/
+ohos/.cxx/
+ohos/.ohpm/
+ohos/oh_modules/
+ohos/entry/oh_modules/
+ohos/entry/libs/
+ohos/entry/build/
+ohos/entry/.preview/
+ohos/entry/src/main/resources/rawfile/flutter_assets/
+ohos/.port_backup/
+.port_backup/

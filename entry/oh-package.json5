@@ -1,9 +1,0 @@
-{
-  "name": "entry",
-  "version": "1.0.0",
-  "description": "StashScrubber entry module",
-  "main": "",
-  "author": "gtx2090ti",
-  "license": "Apache-2.0",
-  "dependencies": {}
-}
