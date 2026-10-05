@@ -1,4 +1,4 @@
-# StashScrubber（鸿蒙版）
+﻿# StashScrubber（鸿蒙版）
 
 Stash 媒体库的鸿蒙 NEXT 原生客户端（Flutter），兼容 **Stash 0.31.x**。
 
@@ -30,7 +30,7 @@ Stash 媒体库的鸿蒙 NEXT 原生客户端（Flutter），兼容 **Stash 0.31
 - 演员削刮默认保留原名；写回兼容 0.31.1（height_cm / alias_list）
 
 ### 扫描 / 任务 / 生成
-- 扫描：全部或选择二级文件夹，可选生成封面 / 预览 
+- 扫描：全部或选择二级文件夹，可选生成封面 / 视频预览 / 预览缩略图 / 感知哈希等
 - Stash 任务队列：实时显示扫描 / 生成 / 清理任务进度
 - 生成封面：详情页单部 / 多选批量 / 任务页全局（0.31.1 metadataGenerate + sceneIDs）
 
@@ -65,3 +65,4 @@ cd ohos && hvigorw assembleHap -p product=default -p buildMode=release   # 编�
 - 更早版本：底部导航、无限滚动、翻页按钮删除、收藏、排序新枚举、削刮 0.31.1 字段兼容、中文本地化复制粘贴等
 
 > 说明：本仓库自 v1.6.46 起存放 Flutter 版完整源码；更早的 ArkTS 版代码保留在 git 历史中（tag v1.6.1 及之前）。
+
