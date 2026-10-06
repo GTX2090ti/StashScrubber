@@ -127,14 +127,33 @@ class ScenePaths {
 }
 
 class SceneFile {
+  final String id;
   final String path;
   final int height;
   final int width;
-  const SceneFile({this.path = '', this.height = 0, this.width = 0});
+  final int size;
+  final String modTime;
+  final String createdAt;
+  final double duration;
+  const SceneFile({
+    this.id = '',
+    this.path = '',
+    this.height = 0,
+    this.width = 0,
+    this.size = 0,
+    this.modTime = '',
+    this.createdAt = '',
+    this.duration = 0,
+  });
   factory SceneFile.fromJson(dynamic j) => SceneFile(
+        id: _s(j?['id']),
         path: _s(j?['path']),
         height: _i(j?['height']),
         width: _i(j?['width']),
+        size: _i(j?['size']),
+        modTime: _s(j?['mod_time']),
+        createdAt: _s(j?['created_at']),
+        duration: j?['duration'] is num ? (j?['duration'] as num).toDouble() : 0,
       );
 }
 

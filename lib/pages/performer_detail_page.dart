@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../widgets/common.dart';
 import 'performer_edit_page.dart';
+import 'performer_merge_page.dart';
 import 'scene_detail_page.dart';
 import 'scrape_page.dart';
 import 'tag_detail_page.dart';
@@ -28,6 +29,29 @@ class _RelatedScenesState extends State<RelatedScenes> {
   bool _loadingMore = false;
   bool _hasMore = true;
   String _error = '';
+  String _sort = 'date';
+  String _direction = 'DESC';
+
+  /// 排序选项（与 Stash 0.31.1 SceneSorter 对齐：date_added→created_at、file_size→filesize、studio_name→studio）。
+  static const List<(String, String)> _sortOptions = [
+    ('date', '发行日期'),
+    ('created_at', '添加时间'),
+    ('title', '标题'),
+    ('rating', '评分'),
+    ('o_counter', '播放次数'),
+    ('duration', '时长'),
+    ('filesize', '文件大小'),
+    ('performer_count', '演员数'),
+    ('studio', '工作室'),
+    ('tag_count', '标签数'),
+  ];
+
+  String get _sortLabel {
+    for (final (s, l) in _sortOptions) {
+      if (s == _sort) return l;
+    }
+    return _sort;
+  }
 
   static const int _perPage = 30;
 
@@ -62,8 +86,8 @@ class _RelatedScenesState extends State<RelatedScenes> {
       final r = await buildApi().findScenes(
         page: _page + 1,
         perPage: _perPage,
-        sort: 'date',
-        direction: 'DESC',
+        sort: _sort,
+        direction: _direction,
         sceneFilter: widget.sceneFilter,
       );
       if (!mounted) return;
@@ -78,6 +102,79 @@ class _RelatedScenesState extends State<RelatedScenes> {
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
+  }
+
+  /// 排序方式弹窗（与 Stash 对齐，含方向切换）。
+  Future<void> _openSortSheet() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                child: Row(children: [
+                  Expanded(
+                    child: Text('排序方式',
+                        style: theme.textTheme.titleMedium),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx, 'toggle_dir');
+                    },
+                    icon: Icon(
+                      _direction == 'DESC'
+                          ? Icons.arrow_downward
+                          : Icons.arrow_upward,
+                      size: 16,
+                    ),
+                    label: Text(
+                      _direction == 'DESC' ? '从新到旧' : '从旧到新',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final (s, l) in _sortOptions)
+                      ListTile(
+                        dense: true,
+                        title: Text(l, style: const TextStyle(fontSize: 13)),
+                        trailing: s == _sort
+                            ? Icon(Icons.check,
+                                size: 18, color: theme.colorScheme.primary)
+                            : null,
+                        onTap: () => Navigator.pop(ctx, s),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    if (picked == 'toggle_dir') {
+      setState(() => _direction = _direction == 'DESC' ? 'ASC' : 'DESC');
+    } else {
+      setState(() => _sort = picked);
+    }
+    setState(() {
+      _page = 0;
+      _hasMore = true;
+      _scenes.clear();
+      _total = 0;
+    });
+    _loadMore();
   }
 
   @override
@@ -95,7 +192,28 @@ class _RelatedScenesState extends State<RelatedScenes> {
       ]);
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SectionTitle('短片（$_total）'),
+      Row(children: [
+        Expanded(child: SectionTitle('短片（$_total）')),
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: TextButton.icon(
+            onPressed: _openSortSheet,
+            style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                minimumSize: const Size(0, 28)),
+            icon: Icon(
+              _direction == 'DESC'
+                  ? Icons.arrow_downward
+                  : Icons.arrow_upward,
+              size: 13,
+            ),
+            label: Text(_sortLabel,
+                style: const TextStyle(fontSize: 11),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+        ),
+      ]),
       GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -298,6 +416,22 @@ class _PerformerDetailPageState extends State<PerformerDetailPage> {
           title: Text(p?.name.isNotEmpty == true ? p!.name : '演员详情',
               overflow: TextOverflow.ellipsis),
           actions: [
+            if (p != null)
+              IconButton(
+                tooltip: '合并演员',
+                onPressed: () async {
+                  final ok = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => PerformerMergePage(
+                              targetId: widget.performerId,
+                              targetName: p.name,
+                            )),
+                  );
+                  if (ok == true && mounted) _load();
+                },
+                icon: const Icon(Icons.merge_type),
+              ),
             if (p != null)
               IconButton(
                 tooltip: '删除演员',

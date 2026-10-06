@@ -111,6 +111,26 @@ class _ScrapePageState extends State<ScrapePage> {
 
   // ---------- 削刮 ----------
 
+  /// 把服务端/网络错误转成便于理解的中文提示。
+  String _friendlyErr(Object e) {
+    final s = e.toString();
+    if (s.contains('not implemented')) {
+      return '该削刮方式服务端不支持，请切换削刮方式或换一个源';
+    }
+    if (s.contains('404')) {
+      return '目标站点返回 404（内容不存在或页面已失效），可换削刮器重试';
+    }
+    if (s.contains('timeout') || s.contains('超时') || s.contains('SocketException') ||
+        s.contains('ClientException') || s.contains('连接')) {
+      return '站点响应超时或连接失败，请稍后重试或换一个源';
+    }
+    final m = RegExp(r'scraper (\S+): failed to load URL').firstMatch(s);
+    if (m != null) {
+      return '刮削器 ${m.group(1)} 抓取站点失败（站点不可访问或页面变化），可换削刮器';
+    }
+    return s;
+  }
+
   Future<void> _run(Future<void> Function() body) async {
     setState(() {
       _started = true;
@@ -131,7 +151,7 @@ class _ScrapePageState extends State<ScrapePage> {
             _error = '没有削刮到结果。可点底部「换削刮器」换一个源重试。');
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '削刮失败：$e');
+      if (mounted) setState(() => _error = '削刮失败：${_friendlyErr(e)}');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -140,16 +160,35 @@ class _ScrapePageState extends State<ScrapePage> {
   void _scrapeFragment(Scraper s) {
     final api = buildApi();
     _run(() async {
+      if (_isPerformer) {
+        // 0.31.1 本地刮削器 FRAGMENT 需传 performer_input（performer_id 返回
+        // not implemented），先取本地演员数据构造。
+        final p = await api.findPerformer(widget.targetId);
+        final input = <String, dynamic>{
+          if (p != null && p.name.isNotEmpty) 'name': p.name,
+          // aliases 已是逗号分隔字符串，符合 ScrapedPerformerInput.aliases 格式
+          if (p != null && p.aliases.isNotEmpty) 'aliases': p.aliases,
+          if (p != null && p.birthdate.isNotEmpty) 'birthdate': p.birthdate,
+          if (p != null && p.ethnicity.isNotEmpty) 'ethnicity': p.ethnicity,
+          if (p != null && p.country.isNotEmpty) 'country': p.country,
+          if (p != null && p.measurements.isNotEmpty)
+            'measurements': p.measurements,
+          if (p != null && p.details.isNotEmpty) 'details': p.details,
+        };
+        final r = await api.scrapePerformerFragment({'scraper_id': s.id}, input);
+        if (!mounted) return;
+        setState(() => _performerResults = r.cast<ScrapedPerformer>());
+        return;
+      }
       final r = _isScene
           ? await api.scrapeSceneFragment({'scraper_id': s.id}, widget.targetId)
-          : await api.scrapePerformerFragment(
-              {'scraper_id': s.id}, widget.targetId);
+          : const <ScrapedPerformer>[];
       if (!mounted) return;
       setState(() {
         if (_isScene) {
           _sceneResults = r.cast<ScrapedScene>();
         } else {
-          _performerResults = r.cast<ScrapedPerformer>();
+          _performerResults = const [];
         }
       });
     });
@@ -282,14 +321,52 @@ class _ScrapePageState extends State<ScrapePage> {
       _applyError = false;
     });
     final api = buildApi();
+    var nameSkipped = false;
     try {
       int n = 0;
       if (_isScene) {
         n = await api.applyScrapedScene(
             _sceneResults[_previewIndex], widget.targetId, _includeImage);
       } else if (_isPerformer) {
-        n = await api.applyScrapedPerformer(
-            _performerResults[_previewIndex], widget.targetId, _includeImage);
+        final p = _performerResults[_previewIndex];
+        final scrapedName = p.name.trim();
+        if (scrapedName.isNotEmpty) {
+          String localName = '';
+          try {
+            localName =
+                (await api.findPerformer(widget.targetId))?.name.trim() ?? '';
+          } catch (_) {}
+          final nameToWrite =
+              localName.isNotEmpty ? localName : scrapedName;
+          if (nameToWrite.isNotEmpty) {
+            try {
+              final dup =
+                  await api.findPerformers(page: 1, perPage: 50, q: nameToWrite);
+              final clash = dup.items.any((x) =>
+                  x.id != widget.targetId &&
+                  x.name.trim().toLowerCase() == nameToWrite.toLowerCase());
+              if (clash) {
+                // 库中已有同名演员（performers.name UNIQUE），跳过名字写入其余字段
+                nameSkipped = true;
+                n = await api.applyScrapedPerformer(
+                    p, widget.targetId, _includeImage,
+                    writeName: false);
+              } else {
+                n = await api.applyScrapedPerformer(
+                    p, widget.targetId, _includeImage);
+              }
+            } catch (_) {
+              n = await api.applyScrapedPerformer(
+                  p, widget.targetId, _includeImage);
+            }
+          } else {
+            n = await api.applyScrapedPerformer(
+                p, widget.targetId, _includeImage);
+          }
+        } else {
+          n = await api.applyScrapedPerformer(
+              p, widget.targetId, _includeImage);
+        }
       } else {
         n = await api.applyScrapedStudio(
             _studioResults[_previewIndex], widget.targetId, _includeImage);
@@ -298,9 +375,12 @@ class _ScrapePageState extends State<ScrapePage> {
       // 写回成功：提示后自动返回，让详情页/列表页刷新查看结果
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('已写入 $n 个字段',
+          content: Text(
+              nameSkipped
+                  ? '已写入 $n 个字段（名字与库中已有演员冲突，未写入）'
+                  : '已写入 $n 个字段',
               style: const TextStyle(fontSize: 13)),
-          duration: const Duration(seconds: 1),
+          duration: const Duration(seconds: 2),
         ),
       );
       Navigator.pop(context, true);
@@ -581,6 +661,16 @@ class _ScrapePageState extends State<ScrapePage> {
             decoration: InputDecoration(
               labelText: '输入${_isScene ? "短片" : (_isPerformer ? "演员" : "工作室")}名称关键词',
               isDense: true,
+              suffixIcon: _queryCtrl.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清空',
+                      icon: const Icon(Icons.clear, size: 16),
+                      onPressed: () {
+                        _queryCtrl.clear();
+                        setState(() {});
+                      },
+                    ),
             ),
             onChanged: (_) => setState(() {}),
           ),

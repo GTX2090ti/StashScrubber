@@ -4,20 +4,25 @@ import '../models/models.dart';
 import '../widgets/common.dart';
 import '../widgets/zh_toolbar.dart';
 
-/// 合并短片页：搜索源短片（可多选）→ 合并到目标短片（sceneMerge）。
-class MergePage extends StatefulWidget {
-  const MergePage({super.key, required this.targetId, required this.targetTitle});
+/// 演员合并页：搜索源演员（可多选）→ 合并到目标演员（performerMerge）。
+/// 用于处理同名/重复演员：源演员的短片、标签、别名等归并到目标，源条目删除。
+class PerformerMergePage extends StatefulWidget {
+  const PerformerMergePage({
+    super.key,
+    required this.targetId,
+    required this.targetName,
+  });
 
   final String targetId;
-  final String targetTitle;
+  final String targetName;
 
   @override
-  State<MergePage> createState() => _MergePageState();
+  State<PerformerMergePage> createState() => _PerformerMergePageState();
 }
 
-class _MergePageState extends State<MergePage> {
+class _PerformerMergePageState extends State<PerformerMergePage> {
   final _ctrl = TextEditingController();
-  List<Scene> _scenes = [];
+  List<Performer> _performers = [];
   final Set<String> _selected = {};
   bool _loading = false;
   bool _merging = false;
@@ -41,15 +46,15 @@ class _MergePageState extends State<MergePage> {
       _error = '';
     });
     try {
-      final r = await buildApi().findScenes(
+      final r = await buildApi().findPerformers(
         page: 1,
         perPage: 100,
         q: _ctrl.text.trim(),
-        sort: 'date',
-        direction: 'DESC',
+        sort: 'name',
+        direction: 'ASC',
       );
       if (!mounted) return;
-      setState(() => _scenes = r.items);
+      setState(() => _performers = r.items);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '搜索失败：$e');
@@ -65,7 +70,7 @@ class _MergePageState extends State<MergePage> {
       _error = '';
     });
     try {
-      await buildApi().mergeScenes(_selected.toList(), widget.targetId);
+      await buildApi().mergePerformers(_selected.toList(), widget.targetId);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -80,7 +85,7 @@ class _MergePageState extends State<MergePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('合并短片')),
+      appBar: AppBar(title: const Text('合并演员')),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -91,7 +96,7 @@ class _MergePageState extends State<MergePage> {
             onChanged: (_) => setState(() {}),
             onSubmitted: (_) => _search(),
             decoration: InputDecoration(
-              hintText: '搜索短片标题',
+              hintText: '搜索演员',
               isDense: true,
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -120,39 +125,56 @@ class _MergePageState extends State<MergePage> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text('已选 ${_selected.length} 个源短片',
+              child: Text('已选 ${_selected.length} 个源演员',
                   style: theme.textTheme.bodySmall),
             ),
           ),
         Expanded(
           child: _loading
               ? StatusView(loading: true, empty: '', onRetry: _search)
-              : _scenes.isEmpty
+              : _performers.isEmpty
                   ? StatusView(
-                      loading: false, empty: '没有匹配的短片', onRetry: _search)
+                      loading: false, empty: '没有匹配的演员', onRetry: _search)
                   : ListView.builder(
-                      itemCount: _scenes.length,
+                      itemCount: _performers.length,
                       itemBuilder: (_, i) {
-                        final s = _scenes[i];
+                        final p = _performers[i];
+                        final isTarget = p.id == widget.targetId;
                         return CheckboxListTile(
                           dense: true,
-                          value: _selected.contains(s.id),
+                          value: _selected.contains(p.id),
                           controlAffinity: ListTileControlAffinity.trailing,
                           secondary: SizedBox(
                             width: 64,
                             height: 36,
-                            child: AuthImage(rawPath: s.paths.raw, radius: 6),
+                            child: AuthImage(
+                                rawPath: p.imagePath, radius: 6),
                           ),
-                          title: Text(s.displayTitle,
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: s.date.isEmpty ? null : Text(s.date),
-                          onChanged: (v) => setState(() {
-                            if (v == true) {
-                              _selected.add(s.id);
-                            } else {
-                              _selected.remove(s.id);
-                            }
-                          }),
+                          title: Row(children: [
+                            Flexible(
+                              child: Text(p.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                            if (isTarget)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Text('目标',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.primary,
+                                        fontSize: 11)),
+                              ),
+                          ]),
+                          subtitle: p.birthdate.isEmpty ? null : Text(p.birthdate),
+                          onChanged: isTarget
+                              ? null
+                              : (v) => setState(() {
+                                    if (v == true) {
+                                      _selected.add(p.id);
+                                    } else {
+                                      _selected.remove(p.id);
+                                    }
+                                  }),
                         );
                       },
                     ),
@@ -168,8 +190,8 @@ class _MergePageState extends State<MergePage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Column(children: [
             Text(
-              '选择要并入「${widget.targetTitle.isEmpty ? "当前短片" : widget.targetTitle}」的短片（可多选）。'
-              '合并后演员/标签/文件取并集，源短片条目删除（视频文件挂到本片），播放与 O 记录一并合并。',
+              '选择要并入「${widget.targetName.isEmpty ? "当前演员" : widget.targetName}」的源演员（可多选）。'
+              '合并后相关短片、标签、别名等归并到目标演员，源演员条目删除。',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -178,7 +200,7 @@ class _MergePageState extends State<MergePage> {
               onPressed: _merging || _selected.isEmpty ? null : _merge,
               child: Text(_merging
                   ? '合并中…'
-                  : '合并（${_selected.length}）'),
+                  : '合并 ${_selected.length} 个演员到当前演员'),
             ),
           ]),
         ),

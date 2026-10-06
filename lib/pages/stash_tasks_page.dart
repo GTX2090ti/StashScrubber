@@ -161,10 +161,20 @@ class _StashTasksPageState extends State<StashTasksPage> {
                     child: TextField(
                       controller: ctrl,
                       contextMenuBuilder: zhContextMenuBuilder,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: '搜索文件夹',
                         prefixIcon: Icon(Icons.search, size: 18),
                         isDense: true,
+                        suffixIcon: query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: '清空',
+                                icon: const Icon(Icons.clear, size: 16),
+                                onPressed: () {
+                                  ctrl.clear();
+                                  setSheet(() => query = '');
+                                },
+                              ),
                       ),
                       style: const TextStyle(fontSize: 13),
                       onChanged: (v) => setSheet(() => query = v.trim()),
@@ -375,12 +385,12 @@ class _StashTasksPageState extends State<StashTasksPage> {
                     (v) => _scanUseFileMetadata = v,
                     hint: '从文件读取元数据（分辨率、时长等），更准确但较慢'),
               _switch('生成封面', _scanCovers, (v) => _scanCovers = v),
-              _switch('生成预览', _scanPreviews, (v) => _scanPreviews = v),
+              _switch('生成视频预览', _scanPreviews, (v) => _scanPreviews = v),
               _switch('生成图片预览', _scanImagePreviews,
                   (v) => _scanImagePreviews = v),
-              _switch('生成 Phash', _scanPhashes, (v) => _scanPhashes = v,
+              _switch('生成感知哈希', _scanPhashes, (v) => _scanPhashes = v,
                   hint: '用于以图搜图 / 重复检测'),
-              _switch('生成精灵图', _scanSprites, (v) => _scanSprites = v),
+              _switch('生成预览缩略图', _scanSprites, (v) => _scanSprites = v),
               const SizedBox(height: 6),
               _submitButton(
                 _scanPaths.isEmpty
@@ -408,15 +418,15 @@ class _StashTasksPageState extends State<StashTasksPage> {
               theme,
               icon: Icons.auto_awesome_motion_outlined,
               title: '生成',
-              subtitle: '为已有媒体按类别生成封面/预览等（适合升级后补充素材）。',
+              subtitle: '为已有媒体按类别生成封面/视频预览等（适合升级后补充素材）。',
             children: [
               _switch('覆盖已存在', _genOverwrite, (v) => _genOverwrite = v,
                   hint: '关闭时只补缺失的素材'),
               _switch('封面', _genCovers, (v) => _genCovers = v),
               _switch('视频预览', _genPreviews, (v) => _genPreviews = v),
               _switch('图片预览', _genImagePreviews, (v) => _genImagePreviews = v),
-              _switch('Phash', _genPhashes, (v) => _genPhashes = v),
-              _switch('精灵图', _genSprites, (v) => _genSprites = v),
+              _switch('感知哈希', _genPhashes, (v) => _genPhashes = v),
+              _switch('预览缩略图', _genSprites, (v) => _genSprites = v),
               _switch('交互热图', _genHeatmaps, (v) => _genHeatmaps = v),
               const SizedBox(height: 6),
               _submitButton(

@@ -249,6 +249,7 @@ class _SceneEditPageState extends State<SceneEditPage> {
                 TextField(
                     controller: _dateCtrl,
                     contextMenuBuilder: zhContextMenuBuilder,
+                    inputFormatters: const [DateDashInputFormatter()],
                     decoration:
                         const InputDecoration(labelText: '日期（yyyy-MM-dd）')),
                 Row(children: [

@@ -18,6 +18,7 @@ class StudioListPage extends StatefulWidget {
 
 class _StudioListPageState extends State<StudioListPage> {
   final ScrollController _scroll = ScrollController();
+  final TextEditingController _searchCtrl = TextEditingController();
   List<Studio> _items = [];
   int _total = 0;
   int _page = 0;
@@ -26,6 +27,25 @@ class _StudioListPageState extends State<StudioListPage> {
   bool _hasMore = true;
   String _error = '';
   String _query = '';
+  String _sort = 'name';
+  String _direction = 'ASC';
+
+  /// 排序选项（Stash 0.31.1 Studio 排序白名单内的常用字段）。
+  static const List<(String, String)> _sortOptions = [
+    ('name', '名称'),
+    ('scenes_count', '短片数'),
+    ('rating', '评分'),
+    ('created_at', '添加时间'),
+    ('updated_at', '更新时间'),
+    ('latest_scene', '最近短片'),
+  ];
+
+  String get _sortLabel {
+    for (final (s, l) in _sortOptions) {
+      if (s == _sort) return l;
+    }
+    return _sort;
+  }
 
   static const int _perPage = 60;
 
@@ -46,6 +66,7 @@ class _StudioListPageState extends State<StudioListPage> {
   void dispose() {
     AppSettings.instance.removeListener(_onCfg);
     _scroll.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -87,6 +108,73 @@ class _StudioListPageState extends State<StudioListPage> {
     if (id != null) _reload();
   }
 
+  /// 排序方式弹窗（与 Stash 对齐，含方向切换）。
+  Future<void> _openSortSheet() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                child: Row(children: [
+                  Expanded(
+                    child: Text('排序方式',
+                        style: theme.textTheme.titleMedium),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx, 'toggle_dir');
+                    },
+                    icon: Icon(
+                      _direction == 'DESC'
+                          ? Icons.arrow_downward
+                          : Icons.arrow_upward,
+                      size: 16,
+                    ),
+                    label: Text(
+                      _direction == 'DESC' ? '从新到旧' : '从旧到新',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final (s, l) in _sortOptions)
+                      ListTile(
+                        dense: true,
+                        title: Text(l, style: const TextStyle(fontSize: 13)),
+                        trailing: s == _sort
+                            ? Icon(Icons.check,
+                                size: 18, color: theme.colorScheme.primary)
+                            : null,
+                        onTap: () => Navigator.pop(ctx, s),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+    if (picked == 'toggle_dir') {
+      setState(() => _direction = _direction == 'DESC' ? 'ASC' : 'DESC');
+    } else {
+      setState(() => _sort = picked);
+    }
+    _reload();
+  }
+
   Future<void> _loadMore() async {
     if (_loadingMore || !_hasMore) return;
     final next = _page + 1;
@@ -96,8 +184,12 @@ class _StudioListPageState extends State<StudioListPage> {
     });
     _error = '';
     try {
-      final r = await buildApi()
-          .findStudios(page: next, perPage: _perPage, q: _query);
+      final r = await buildApi().findStudios(
+          page: next,
+          perPage: _perPage,
+          q: _query,
+          sort: _sort,
+          direction: _direction);
       if (!mounted) return;
       setState(() {
         _total = r.count;
@@ -153,13 +245,27 @@ class _StudioListPageState extends State<StudioListPage> {
         child: Row(children: [
           Expanded(
             child: TextField(
+              controller: _searchCtrl,
               style: const TextStyle(fontSize: 13),
               textInputAction: TextInputAction.search,
               contextMenuBuilder: zhContextMenuBuilder,
-              onChanged: (v) => _query = v,
+              onChanged: (v) => setState(() => _query = v),
               onSubmitted: (_) => _reload(),
-              decoration:
-                  const InputDecoration(hintText: '搜索工作室', isDense: true),
+              decoration: InputDecoration(
+                hintText: '搜索工作室',
+                isDense: true,
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: '清空',
+                        icon: const Icon(Icons.clear, size: 16),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _query = '');
+                          _reload();
+                        },
+                      ),
+              ),
             ),
           ),
           const SizedBox(width: 6),
@@ -170,6 +276,19 @@ class _StudioListPageState extends State<StudioListPage> {
                   FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10)),
               onPressed: _reload,
               child: const Text('搜索', style: TextStyle(fontSize: 12)),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            height: 30,
+            child: OutlinedButton(
+              style:
+                  OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+              onPressed: _openSortSheet,
+              child: Text(_sortLabel,
+                  style: const TextStyle(fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
             ),
           ),
           const SizedBox(width: 6),

@@ -25,6 +25,7 @@ class SceneListPage extends StatefulWidget {
 
 class _SceneListPageState extends State<SceneListPage> {
   final ScrollController _scroll = ScrollController();
+  final TextEditingController _searchCtrl = TextEditingController();
   List<Scene> _scenes = [];
   int _total = 0;
   int _page = 0;
@@ -85,6 +86,7 @@ class _SceneListPageState extends State<SceneListPage> {
   void dispose() {
     _cfg.removeListener(_onSettingsChanged);
     _scroll.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -484,14 +486,26 @@ class _SceneListPageState extends State<SceneListPage> {
       child: Row(children: [
         Expanded(
           child: TextField(
+            controller: _searchCtrl,
             style: const TextStyle(fontSize: 13),
             textInputAction: TextInputAction.search,
             contextMenuBuilder: zhContextMenuBuilder,
             onSubmitted: (_) => _reload(),
-            onChanged: (v) => _query = v,
-            decoration: const InputDecoration(
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
               hintText: '搜索标题 / 演员 / 标签',
               isDense: true,
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清空',
+                      icon: const Icon(Icons.clear, size: 16),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _query = '');
+                        _reload();
+                      },
+                    ),
             ),
           ),
         ),

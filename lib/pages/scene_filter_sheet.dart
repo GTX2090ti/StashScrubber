@@ -112,6 +112,14 @@ class _SceneFilterSheetState extends State<SceneFilterSheet> {
               hintText: '搜索$title',
               isDense: true,
               prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: q.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清空',
+                      icon: const Icon(Icons.clear, size: 16),
+                      onPressed: () =>
+                          setState(() => _multiSearch[title] = ''),
+                    ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               border: OutlineInputBorder(

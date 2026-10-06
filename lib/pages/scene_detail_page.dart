@@ -28,8 +28,28 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
   String _error = '';
   bool _favBusy = false;
   bool _genBusy = false;
+  String _primaryFileId = '';
+  bool _primaryBusy = false;
 
   StashApi get _api => buildApi();
+
+  /// 设置默认文件（Stash 0.31+ SceneUpdateInput.primary_file_id）。
+  Future<void> _setPrimaryFile(String fileId) async {
+    final s = _scene;
+    if (s == null || _primaryBusy) return;
+    setState(() => _primaryBusy = true);
+    try {
+      await _api.updateScene({'id': s.id, 'primary_file_id': fileId});
+      if (!mounted) return;
+      setState(() => _primaryFileId = fileId);
+      showToast(context, '已设为默认文件');
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, '设置失败：$e');
+    } finally {
+      if (mounted) setState(() => _primaryBusy = false);
+    }
+  }
 
   /// 为当前短片生成封面（服务端后台任务，只补缺失，不覆盖已有封面）。
   Future<void> _generateCover() async {
@@ -141,6 +161,37 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
   void _toastCopy(String path) {
     Clipboard.setData(ClipboardData(text: path));
     showToast(context, '路径已复制');
+  }
+
+  /// 文件大小格式化。
+  static String _fmtSize(int bytes) {
+    if (bytes <= 0) return '';
+    if (bytes >= (1 << 30)) {
+      return '${(bytes / (1 << 30)).toStringAsFixed(2)} GB';
+    }
+    if (bytes >= (1 << 20)) {
+      return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= (1 << 10)) {
+      return '${(bytes / (1 << 10)).toStringAsFixed(0)} KB';
+    }
+    return '$bytes B';
+  }
+
+  /// 时长格式化（秒 → HH:MM:SS / MM:SS）。
+  static String _fmtDur(double sec) {
+    if (sec <= 0) return '';
+    final t = sec.round();
+    final h = t ~/ 3600, m = (t % 3600) ~/ 60, s = t % 60;
+    String p(int v) => v.toString().padLeft(2, '0');
+    return h > 0 ? '$h:${p(m)}:${p(s)}' : '$m:${p(s)}';
+  }
+
+  /// ISO8601 时间 → 可读（本地 UTC 标注）。
+  static String _fmtTime(String t) {
+    if (t.isEmpty) return '';
+    final norm = t.replaceAll('T', ' ').replaceAll('Z', '').replaceAll('+00:00', '');
+    return norm.length >= 16 ? norm.substring(0, 16) : norm;
   }
 
   @override
@@ -274,19 +325,77 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
                     ],
 
                     if (s.files.isNotEmpty) ...[
-                      const SectionTitle('文件路径'),
-                      for (final f in s.files)
+                      const SectionTitle('文件'),
+                      for (final f in s.files) ...[
                         InkWell(
                           onTap: () => _toastCopy(f.path),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 3),
-                            child: Text(f.path,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant)),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // 路径单独一行，长路径允许完整折行显示
+                                Text(f.path,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme
+                                            .colorScheme.onSurfaceVariant)),
+                                const SizedBox(height: 2),
+                                // 大小 / 时长 / 修改时间
+                                Text(
+                                  [
+                                    if (f.size > 0) '大小 ${_fmtSize(f.size)}',
+                                    if (f.duration > 0)
+                                      '时长 ${_fmtDur(f.duration)}',
+                                    if (f.modTime.isNotEmpty)
+                                      '修改 ${_fmtTime(f.modTime)}',
+                                  ].join(' · '),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                      fontSize: 10,
+                                      color: theme
+                                          .colorScheme.onSurfaceVariant),
+                                ),
+                                const SizedBox(height: 2),
+                                // 默认文件标记 / 设为默认按钮
+                                if (_primaryFileId == f.id)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 2),
+                                    child: Text(
+                                      '★ 默认文件',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                              fontSize: 11,
+                                              color: theme
+                                                  .colorScheme.primary,
+                                              fontWeight: FontWeight.w600),
+                                    ),
+                                  )
+                                else
+                                  TextButton.icon(
+                                    onPressed: _primaryBusy
+                                        ? null
+                                        : () => _setPrimaryFile(f.id),
+                                    style: TextButton.styleFrom(
+                                        minimumSize: const Size(0, 26),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4)),
+                                    icon: const Icon(Icons.star_border,
+                                        size: 13),
+                                    label: const Text('设为默认',
+                                        style: TextStyle(fontSize: 11)),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
+                        // 修改时间等元数据展示后自动添加分割线，分隔多个文件
+                        Divider(
+                          height: 14,
+                          thickness: 0.6,
+                          color: theme.colorScheme.outlineVariant
+                              .withOpacity(0.7),
+                        ),
+                      ],
                     ],
 
                     if (s.tags.isNotEmpty) ...[

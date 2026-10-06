@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'zh_toolbar.dart';
 
@@ -8,6 +9,32 @@ import '../settings/app_settings.dart';
 /// 全局 API 客户端：跟随当前档案 / 生效地址重建。
 StashApi buildApi() =>
     StashApi(AppSettings.instance.baseUrl, AppSettings.instance.apiKey);
+
+/// 日期输入格式化：只保留数字并自动按 YYYY-MM-DD 插入连字符，
+/// 用户无需手动输入 "-"，输入 20261003 即显示 2026-10-03。
+class DateDashInputFormatter extends TextInputFormatter {
+  const DateDashInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue(selection: TextSelection.collapsed(offset: 0));
+    }
+    final limited = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final buf = StringBuffer();
+    for (var i = 0; i < limited.length; i++) {
+      if (i == 4 || i == 6) buf.write('-');
+      buf.write(limited[i]);
+    }
+    final text = buf.toString();
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
 
 /// 通用多选弹窗（编辑页演员/标签等使用）：半屏列表 + 搜索框 + 完成按钮。
 /// options 为 (id, 显示名) 列表；返回用户确认后的选中 id 集合（取消返回 null）。
@@ -110,6 +137,16 @@ class _SelectSheetState extends State<_SelectSheet> {
               hintText: '搜索…',
               prefixIcon: const Icon(Icons.search, size: 18),
               isDense: true,
+              suffixIcon: _q.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '清空',
+                      icon: const Icon(Icons.clear, size: 16),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _q = '');
+                      },
+                    ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               border: OutlineInputBorder(

@@ -226,50 +226,56 @@ class StashApi {
     await query(gq, vars, const Duration(seconds: 15));
   }
 
-  /// 生成任务：按类别为已有媒体生成封面/预览/图片预览/Phash/精灵图/交互热图。
+  /// 生成任务：按类别为已有媒体生成封面/视频预览/图片预览/感知哈希/预览缩略图/互动热图。
   /// mutation 名按服务器实际字段传入（0.31+ 为 metadataGenerate，旧版为 generate）。
   /// [sceneIDs] 非空时只对指定短片生成（0.31+ GenerateMetadataInput.sceneIDs）。
+  /// 只把勾选为 true 的选项写入 input，避免 0.31.1 中不存在的字段（如
+  /// interactiveHeatmaps）导致 HTTP 422。
   Future<void> generate({
     required String mutation,
-    required bool covers,
-    required bool sprites,
-    required bool previews,
-    required bool imagePreviews,
-    required bool phashes,
+    bool covers = false,
+    bool sprites = false,
+    bool previews = false,
+    bool imagePreviews = false,
+    bool phashes = false,
     bool interactiveHeatmaps = false,
     bool clipPreviews = false,
     bool overwrite = false,
     List<String> sceneIDs = const [],
   }) async {
-    final hasIds = sceneIDs.isNotEmpty;
-    final input = 'covers: \$covers, sprites: \$sprites, '
-        'previews: \$previews, imagePreviews: \$imagePreviews, '
-        'phashes: \$phashes, interactiveHeatmaps: \$interactiveHeatmaps, '
-        'clipPreviews: \$clipPreviews, overwrite: \$overwrite'
-        '${hasIds ? ', sceneIDs: \$sceneIDs' : ''}';
-    final gq = hasIds
-        ? 'mutation(\$covers: Boolean!, \$sprites: Boolean!, '
-            '\$previews: Boolean!, \$imagePreviews: Boolean!, '
-            '\$phashes: Boolean!, \$interactiveHeatmaps: Boolean, '
-            '\$clipPreviews: Boolean, \$overwrite: Boolean, '
-            '\$sceneIDs: [ID!]!) '
-            '{ $mutation(input: { $input }) }'
-        : 'mutation(\$covers: Boolean!, \$sprites: Boolean!, '
-            '\$previews: Boolean!, \$imagePreviews: Boolean!, '
-            '\$phashes: Boolean!, \$interactiveHeatmaps: Boolean, '
-            '\$clipPreviews: Boolean, \$overwrite: Boolean) '
-            '{ $mutation(input: { $input }) }';
-    final vars = <String, dynamic>{
-      'covers': covers,
-      'sprites': sprites,
-      'previews': previews,
-      'imagePreviews': imagePreviews,
-      'phashes': phashes,
-      'interactiveHeatmaps': interactiveHeatmaps,
-      'clipPreviews': clipPreviews,
-      'overwrite': overwrite,
-      if (hasIds) 'sceneIDs': sceneIDs,
-    };
+    final vars = <String, dynamic>{};
+    final varDecls = <String>[];
+    final inputFields = <String>[];
+    void addBool(String name, bool v) {
+      if (v) {
+        vars[name] = true;
+        varDecls.add('\$$name: Boolean');
+        inputFields.add('$name: \$$name');
+      }
+    }
+
+    addBool('covers', covers);
+    addBool('sprites', sprites);
+    addBool('previews', previews);
+    addBool('imagePreviews', imagePreviews);
+    addBool('phashes', phashes);
+    // 0.31+ 的 GenerateMetadataInput 字段名为 interactiveHeatmapsSpeeds，
+    // 旧版 generate 才是 interactiveHeatmaps，按 mutation 名区分。
+    addBool(
+        mutation == 'metadataGenerate'
+            ? 'interactiveHeatmapsSpeeds'
+            : 'interactiveHeatmaps',
+        interactiveHeatmaps);
+    addBool('clipPreviews', clipPreviews);
+    addBool('overwrite', overwrite);
+    if (sceneIDs.isNotEmpty) {
+      vars['sceneIDs'] = sceneIDs;
+      varDecls.add('\$sceneIDs: [ID!]!');
+      inputFields.add('sceneIDs: \$sceneIDs');
+    }
+    final head =
+        varDecls.isEmpty ? 'mutation' : 'mutation(${varDecls.join(', ')})';
+    final gq = '$head { $mutation(input: { ${inputFields.join(', ')} }) }';
     await query(gq, vars, const Duration(seconds: 15));
   }
 
@@ -715,7 +721,7 @@ class StashApi {
           performers { id name image_path birthdate details }
           tags { id name }
           paths { screenshot webp }
-          files { path }
+          files { id path size mod_time created_at duration height width }
         }
       }''';
     final d = await query(q, {'id': id});
@@ -758,6 +764,8 @@ class StashApi {
     int page = 1,
     int perPage = 120,
     String? q,
+    String sort = 'name',
+    String direction = 'ASC',
   }) async {
     const gq = '''
       query FindPerformers(\$filter: FindFilterType!) {
@@ -769,8 +777,8 @@ class StashApi {
     final filter = <String, dynamic>{
       'page': page,
       'per_page': perPage,
-      'sort': 'name',
-      'direction': 'ASC',
+      'sort': sort,
+      'direction': direction,
       if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
     };
     final d = await query(gq, {'filter': filter});
@@ -786,6 +794,8 @@ class StashApi {
     int page = 1,
     int perPage = 120,
     String? q,
+    String sort = 'name',
+    String direction = 'ASC',
   }) async {
     const gq = '''
       query FindStudios(\$filter: FindFilterType!) {
@@ -797,8 +807,8 @@ class StashApi {
     final filter = <String, dynamic>{
       'page': page,
       'per_page': perPage,
-      'sort': 'name',
-      'direction': 'ASC',
+      'sort': sort,
+      'direction': direction,
       if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
     };
     final d = await query(gq, {'filter': filter});
@@ -870,15 +880,18 @@ class StashApi {
     return s == null ? const [] : [ScrapedScene.fromJson(s)];
   }
 
+  /// 本地刮削器片段削刮：0.31.1 的 ScrapeSinglePerformer 对本地 scraper_id
+  /// 只支持 performer_input（FRAGMENT）与 query（NAME），不支持 performer_id
+  ///（直接返回 ErrNotImplemented）。故调用方先取本地演员数据构造 performer_input。
   Future<List<ScrapedPerformer>> scrapePerformerFragment(
-      Map<String, dynamic> source, String performerId) async {
+      Map<String, dynamic> source, Map<String, dynamic> performerInput) async {
     const gq = '''
       query ScrapeSinglePerformer(\$source: ScraperSourceInput!, \$input: ScrapeSinglePerformerInput!) {
         scrapeSinglePerformer(source: \$source, input: \$input) { $_performerSelection }
       }''';
     final d = await query(gq, {
       'source': source,
-      'input': {'performer_id': performerId},
+      'input': {'performer_input': performerInput},
     }, _long);
     final list = d?['scrapeSinglePerformer'];
     if (list is! List) return const [];
@@ -1022,6 +1035,18 @@ class StashApi {
     if (d?['sceneMerge'] == null) throw ApiException('sceneMerge 失败');
   }
 
+  /// 演员合并：把 sourceIds 的演员并入 destinationId（源条目删除，
+  /// 相关短片/标签等归并到目标）。0.31.1 mutation: performerMerge。
+  Future<void> mergePerformers(
+      List<String> sourceIds, String destinationId) async {
+    const m =
+        'mutation PerformerMerge(\$input: PerformerMergeInput!) { performerMerge(input: \$input) { id } }';
+    final d = await query(m, {
+      'input': {'source': sourceIds, 'destination': destinationId}
+    });
+    if (d?['performerMerge'] == null) throw ApiException('performerMerge 失败');
+  }
+
   // ---------- 削刮结果写回 ----------
 
   /// 下载图片转 base64 data URI；失败返回空串（不影响文字字段）。
@@ -1118,7 +1143,7 @@ class StashApi {
   /// 写回演员削刮结果（全部字段）。
   Future<int> applyScrapedPerformer(
       ScrapedPerformer p, String targetId, bool includeImage,
-      {bool keepOriginalName = true}) async {
+      {bool keepOriginalName = true, bool writeName = true}) async {
     final input = <String, dynamic>{'id': targetId};
     var changed = 0;
     void put(String key, String v) {
@@ -1128,17 +1153,21 @@ class StashApi {
       }
     }
 
-    // 默认保持原名：写回名字时用本地已有名字，不改名；
-    // 仅当本地无名字（如新演员）时才用刮削结果的名字。
-    var nameToWrite = p.name;
-    if (keepOriginalName) {
-      try {
-        final local = await findPerformer(targetId);
-        final localName = local?.name.trim() ?? '';
-        if (localName.isNotEmpty) nameToWrite = localName;
-      } catch (_) {}
+    // writeName=false 用于名字与库中已有演员冲突时跳过名字字段
+    // （performers.name 有 UNIQUE 约束，直接写会失败）。
+    if (writeName) {
+      // 默认保持原名：写回名字时用本地已有名字，不改名；
+      // 仅当本地无名字（如新演员）时才用刮削结果的名字。
+      var nameToWrite = p.name;
+      if (keepOriginalName) {
+        try {
+          final local = await findPerformer(targetId);
+          final localName = local?.name.trim() ?? '';
+          if (localName.isNotEmpty) nameToWrite = localName;
+        } catch (_) {}
+      }
+      put('name', nameToWrite);
     }
-    put('name', nameToWrite);
     put('disambiguation', p.disambiguation);
     // 0.31.1 起别名字段为 alias_list（ScrapedPerformer.aliases 为逗号分隔）
     if (p.aliases.trim().isNotEmpty) {

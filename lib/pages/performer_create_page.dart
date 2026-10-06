@@ -129,6 +129,7 @@ class _PerformerCreatePageState extends State<PerformerCreatePage> {
                 TextField(
                     controller: _birthCtrl,
                     contextMenuBuilder: zhContextMenuBuilder,
+                    inputFormatters: const [DateDashInputFormatter()],
                     decoration: const InputDecoration(
                         labelText: '出生日期（yyyy-MM-dd）')),
                 const SizedBox(height: 12),
