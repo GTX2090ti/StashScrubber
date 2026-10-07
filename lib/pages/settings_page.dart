@@ -102,6 +102,18 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
 
         const SizedBox(height: 24),
+        Text('隐私', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 4),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.visibility_off_outlined),
+          title: const Text('安全模式'),
+          subtitle: const Text('缩略图打码，长按可临时查看'),
+          value: _cfg.safeMode,
+          onChanged: (v) => _cfg.setSafeMode(v),
+        ),
+
+        const SizedBox(height: 24),
         Text('网络', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
         ListTile(
@@ -139,7 +151,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         Text('关于', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        Text('StashScrubber Flutter 1.6.66', style: theme.textTheme.bodySmall),
+        Text('StashScrubber Flutter 1.6.67', style: theme.textTheme.bodySmall),
         if (!_cfg.storageAvailable)
           Padding(
             padding: const EdgeInsets.only(top: 8),

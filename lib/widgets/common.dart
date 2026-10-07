@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui' show ImageFilter, TileMode;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -200,7 +203,8 @@ class _SelectSheetState extends State<_SelectSheet> {
 
 /// 带鉴权头的网络图（Stash 图片端点强制鉴权）。
 /// 与 ArkTS 版不同：Flutter 原生支持请求头，无需 URL 参数改写。
-class AuthImage extends StatelessWidget {
+/// 安全模式开启时自动打码（模糊），长按缩略图可临时查看 3 秒。
+class AuthImage extends StatefulWidget {
   const AuthImage({
     super.key,
     required this.rawPath,
@@ -219,14 +223,37 @@ class AuthImage extends StatelessWidget {
   final IconData fallbackIcon;
 
   @override
+  State<AuthImage> createState() => _AuthImageState();
+}
+
+class _AuthImageState extends State<AuthImage> {
+  Timer? _revealTimer;
+  bool _revealed = false;
+
+  @override
+  void dispose() {
+    _revealTimer?.cancel();
+    super.dispose();
+  }
+
+  void _reveal() {
+    setState(() => _revealed = true);
+    _revealTimer?.cancel();
+    _revealTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _revealed = false);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final api = buildApi();
-    final url = api.imageUrl(rawPath);
+    final url = api.imageUrl(widget.rawPath);
     final placeholder = Container(
       color: theme.colorScheme.surfaceContainerHighest,
       alignment: Alignment.center,
-      child: Icon(fallbackIcon, size: 20, color: theme.colorScheme.outline),
+      child:
+          Icon(widget.fallbackIcon, size: 20, color: theme.colorScheme.outline),
     );
     Widget child;
     if (url.isEmpty) {
@@ -235,17 +262,55 @@ class AuthImage extends StatelessWidget {
       child = Image.network(
         url,
         headers: api.imageHeaders,
-        fit: fit,
-        width: width,
-        height: height,
+        fit: widget.fit,
+        width: widget.width,
+        height: widget.height,
         errorBuilder: (_, __, ___) => placeholder,
         loadingBuilder: (ctx, child, progress) =>
             progress == null ? child : placeholder,
       );
     }
     return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: SizedBox(width: width, height: height, child: child),
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: ListenableBuilder(
+          listenable: AppSettings.instance,
+          builder: (context, _) {
+            final safe = AppSettings.instance.safeMode;
+            if (!safe || _revealed) return child;
+            return GestureDetector(
+              onLongPress: _reveal,
+              child: Stack(
+                children: [
+                  child,
+                  Positioned.fill(
+                    child: ImageFiltered(
+                      imageFilter: ImageFilter.blur(
+                          sigmaX: 14, sigmaY: 14, tileMode: TileMode.clamp),
+                      child: child,
+                    ),
+                  ),
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(Icons.lock_outline,
+                          size: 12, color: Colors.white70),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 }

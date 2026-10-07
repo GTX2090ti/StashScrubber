@@ -74,6 +74,7 @@ class AppSettings extends ChangeNotifier {
   static const _kSlot = 'active_slot';
   static const _kManualLock = 'manual_lock';
   static const _kReason = 'switch_reason';
+  static const _kSafeMode = 'safe_mode';
 
   List<Profile> profiles = [];
   String currentProfileName = '';
@@ -85,6 +86,10 @@ class AppSettings extends ChangeNotifier {
   int lastLatencyMs = -1;
   int lanLatencyMs = -1;
   int wanLatencyMs = -1;
+
+  /// 安全模式（Stash NSFW Toggle）：开启后缩略图打码，长按临时查看。
+  bool _safeMode = false;
+  bool get safeMode => _safeMode;
 
   bool storageAvailable = true;
   bool _loaded = false;
@@ -166,6 +171,7 @@ class AppSettings extends ChangeNotifier {
       activeSlot = slot == 'wan' ? AddrSlot.wan : AddrSlot.lan;
       manualLock = p.getBool(_kManualLock) ?? false;
       lastSwitchReason = p.getString(_kReason) ?? '';
+      _safeMode = p.getBool(_kSafeMode) ?? false;
       storageAvailable = true;
     } catch (e) {
       storageAvailable = false;
@@ -201,6 +207,7 @@ class AppSettings extends ChangeNotifier {
       await p.setString(_kSlot, activeSlot.name);
       await p.setBool(_kManualLock, manualLock);
       await p.setString(_kReason, lastSwitchReason);
+      await p.setBool(_kSafeMode, _safeMode);
     } catch (e) {
       storageAvailable = false;
       notifyListeners();
@@ -247,6 +254,12 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setAppearance(Appearance mode) async {
     appearance = mode;
+    await _flush();
+  }
+
+  /// 切换安全模式（缩略图打码）。
+  Future<void> setSafeMode(bool v) async {
+    _safeMode = v;
     await _flush();
   }
 
