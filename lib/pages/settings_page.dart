@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
 
 import '../settings/app_settings.dart';
 import 'diagnostics_page.dart';
@@ -18,16 +19,56 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   AppSettings get _cfg => AppSettings.instance;
 
+  final LocalAuthentication _auth = LocalAuthentication();
+  bool _bioAvailable = false;
+
   @override
   void initState() {
     super.initState();
     _cfg.addListener(_onCfg);
+    _checkBiometrics();
   }
 
   @override
   void dispose() {
     _cfg.removeListener(_onCfg);
     super.dispose();
+  }
+
+  Future<void> _checkBiometrics() async {
+    try {
+      final supported = await _auth.isDeviceSupported();
+      final canCheck = await _auth.canCheckBiometrics;
+      if (!mounted) return;
+      setState(() => _bioAvailable = supported && canCheck);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _bioAvailable = false);
+    }
+  }
+
+  Future<void> _toggleBiometricLock(bool v) async {
+    if (v && !_bioAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('此设备不支持生物识别，无法开启面容解锁')),
+      );
+      return;
+    }
+    await _cfg.setBiometricLock(v);
+    if (v) {
+      // 开启后立即要求验证一次（首次生效）
+      try {
+        final ok = await _auth.authenticate(
+          localizedReason: '验证您的身份以启用面容解锁',
+          options: const AuthenticationOptions(biometricOnly: true),
+        );
+        if (ok) {
+          _cfg.markUnlocked();
+        }
+      } catch (e) {
+        debugPrint('biometric enable auth failed: $e');
+      }
+    }
   }
 
   void _onCfg() {
@@ -112,6 +153,16 @@ class _SettingsPageState extends State<SettingsPage> {
           value: _cfg.safeMode,
           onChanged: (v) => _cfg.setSafeMode(v),
         ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.face_retouching_natural),
+          title: const Text('面容解锁'),
+          subtitle: Text(
+            _bioAvailable ? '启动 App 与回到前台时需 Face ID / 指纹验证' : '此设备不支持生物识别',
+          ),
+          value: _cfg.biometricLock,
+          onChanged: _bioAvailable ? _toggleBiometricLock : null,
+        ),
 
         const SizedBox(height: 24),
         Text('网络', style: theme.textTheme.titleMedium),
@@ -151,7 +202,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         Text('关于', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        Text('StashScrubber Flutter 1.6.67', style: theme.textTheme.bodySmall),
+        Text('StashScrubber Flutter 1.6.68', style: theme.textTheme.bodySmall),
         if (!_cfg.storageAvailable)
           Padding(
             padding: const EdgeInsets.only(top: 8),
