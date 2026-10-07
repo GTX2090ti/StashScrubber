@@ -43,6 +43,7 @@ class _StashScrubberAppState extends State<StashScrubberApp>
     with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
   bool _lockShowing = false;
+  bool _wasBackgrounded = false;
 
   @override
   void initState() {
@@ -62,13 +63,24 @@ class _StashScrubberAppState extends State<StashScrubberApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 从后台回到前台时重新验证（若已开启面容解锁）
-    if (state == AppLifecycleState.resumed) {
-      final cfg = AppSettings.instance;
-      if (cfg.biometricLock) {
-        cfg.resetUnlocked();
-        _maybeShowLock();
-      }
+    switch (state) {
+      // 真正切到后台才标记；inactive（如系统 Face ID 弹窗）不算
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        _wasBackgrounded = true;
+        break;
+      case AppLifecycleState.resumed:
+        if (_wasBackgrounded) {
+          _wasBackgrounded = false;
+          final cfg = AppSettings.instance;
+          if (cfg.biometricLock) {
+            cfg.resetUnlocked();
+            _maybeShowLock();
+          }
+        }
+        break;
+      default:
+        break;
     }
   }
 

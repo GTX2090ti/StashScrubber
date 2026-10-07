@@ -57,7 +57,7 @@ class _LockPageState extends State<LockPage> {
       final ok = await _auth.authenticate(
         localizedReason: '验证您的身份以解锁 StashScrubber',
         options: const AuthenticationOptions(
-          biometricOnly: true,
+          // 允许回退到系统密码，避免 Face ID 不可用时锁死
           stickyAuth: true,
         ),
       );

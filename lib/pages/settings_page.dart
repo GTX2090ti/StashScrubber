@@ -60,7 +60,6 @@ class _SettingsPageState extends State<SettingsPage> {
       try {
         final ok = await _auth.authenticate(
           localizedReason: '验证您的身份以启用面容解锁',
-          options: const AuthenticationOptions(biometricOnly: true),
         );
         if (ok) {
           _cfg.markUnlocked();
@@ -202,7 +201,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         Text('关于', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        Text('StashScrubber Flutter 1.6.68', style: theme.textTheme.bodySmall),
+        Text('StashScrubber Flutter 1.6.69', style: theme.textTheme.bodySmall),
         if (!_cfg.storageAvailable)
           Padding(
             padding: const EdgeInsets.only(top: 8),
