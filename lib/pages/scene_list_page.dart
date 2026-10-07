@@ -111,6 +111,8 @@ class _SceneListPageState extends State<SceneListPage> {
   }
 
   Future<void> _reload() async {
+    // 记录当前滚动位置，刷新后精确恢复，避免"进详情操作后返回跳回顶部/偏移"。
+    final saved = _scroll.hasClients ? _scroll.offset : 0.0;
     setState(() {
       _error = '';
       _page = 0;
@@ -118,6 +120,21 @@ class _SceneListPageState extends State<SceneListPage> {
       _scenes = [];
     });
     await _loadMore();
+    if (!mounted) return;
+    if (saved <= 0) return;
+    // 等列表完成布局后：先按需加载到能容纳原位置，再精确跳回。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      while (mounted && _scroll.hasClients && _hasMore) {
+        final max = _scroll.position.maxScrollExtent;
+        if (max >= saved) break;
+        await _loadMore();
+        if (!mounted) return;
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (!mounted || !_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      _scroll.jumpTo(saved <= max ? saved : max);
+    });
   }
 
   Future<void> _loadMore() async {
@@ -129,6 +146,9 @@ class _SceneListPageState extends State<SceneListPage> {
     });
     _error = '';
     try {
+      // 收藏页模式：无论筛选面板如何重置，强制锁定 organized=true，
+      // 避免"重置筛选"后收藏页退化为显示全部短片。
+      if (widget.onlyOrganized) _filter.organized = true;
       final r = _query.trim().isNotEmpty
           ? await _api.searchScenes(
               term: _query.trim(),

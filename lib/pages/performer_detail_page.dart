@@ -374,6 +374,22 @@ class _PerformerDetailPageState extends State<PerformerDetailPage> {
     });
   }
 
+  /// 切换收藏星标；成功后刷新详情并通知列表。
+  Future<void> _toggleFav() async {
+    final p = _p;
+    if (p == null) return;
+    try {
+      await buildApi()
+          .updatePerformer({'id': p.id, 'favorite': !p.favorite});
+      if (!mounted) return;
+      showToast(context, p.favorite ? '已取消收藏' : '已收藏');
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, '操作失败：$e', error: true);
+    }
+  }
+
   /// 确认并删除演员；删除成功后返回上一页并刷新列表。
   Future<void> _confirmDelete() async {
     final name = _p?.name ?? '';
@@ -416,6 +432,12 @@ class _PerformerDetailPageState extends State<PerformerDetailPage> {
           title: Text(p?.name.isNotEmpty == true ? p!.name : '演员详情',
               overflow: TextOverflow.ellipsis),
           actions: [
+            if (p != null)
+              IconButton(
+                tooltip: p.favorite ? '取消收藏' : '收藏',
+                onPressed: _toggleFav,
+                icon: Icon(p.favorite ? Icons.star : Icons.star_border),
+              ),
             if (p != null)
               IconButton(
                 tooltip: '合并演员',

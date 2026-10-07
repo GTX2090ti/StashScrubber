@@ -90,6 +90,8 @@ class _StudioListPageState extends State<StudioListPage> {
   }
 
   Future<void> _reload() async {
+    // 记录当前滚动位置，刷新后精确恢复，避免"进详情操作后返回跳回顶部/偏移"。
+    final saved = _scroll.hasClients ? _scroll.offset : 0.0;
     setState(() {
       _error = '';
       _page = 0;
@@ -97,6 +99,21 @@ class _StudioListPageState extends State<StudioListPage> {
       _items = [];
     });
     await _loadMore();
+    if (!mounted) return;
+    if (saved <= 0) return;
+    // 等列表完成布局后：先按需加载到能容纳原位置，再精确跳回。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      while (mounted && _scroll.hasClients && _hasMore) {
+        final max = _scroll.position.maxScrollExtent;
+        if (max >= saved) break;
+        await _loadMore();
+        if (!mounted) return;
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (!mounted || !_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      _scroll.jumpTo(saved <= max ? saved : max);
+    });
   }
 
   /// 打开手动添加工作室页，成功后刷新列表。

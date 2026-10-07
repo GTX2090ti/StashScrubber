@@ -21,6 +21,21 @@ class _StudioDetailPageState extends State<StudioDetailPage> {
   String _error = '';
   final _scroll = ScrollController();
 
+  /// 切换收藏星标；成功后刷新详情。
+  Future<void> _toggleFav() async {
+    final s = _s;
+    if (s == null) return;
+    try {
+      await buildApi().updateStudio({'id': s.id, 'favorite': !s.favorite});
+      if (!mounted) return;
+      showToast(context, s.favorite ? '已取消收藏' : '已收藏');
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, '操作失败：$e', error: true);
+    }
+  }
+
   /// 确认并删除工作室；成功后返回上一页并刷新列表。
   Future<void> _confirmDelete() async {
     final name = _s?.name ?? '';
@@ -112,6 +127,12 @@ class _StudioDetailPageState extends State<StudioDetailPage> {
           actions: [
             if (s != null)
               IconButton(
+                tooltip: s.favorite ? '取消收藏' : '收藏',
+                onPressed: _toggleFav,
+                icon: Icon(s.favorite ? Icons.star : Icons.star_border),
+              ),
+            if (s != null)
+              IconButton(
                 tooltip: '删除工作室',
                 onPressed: () => _confirmDelete(),
                 icon: const Icon(Icons.delete_outline),
@@ -167,6 +188,71 @@ class _StudioDetailPageState extends State<StudioDetailPage> {
                           style: theme.textTheme.bodySmall
                               ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                     const SizedBox(height: 14),
+                    if (s.parentId.isNotEmpty)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.account_tree_outlined, size: 20),
+                        title: Text('上级工作室：${s.parentName}',
+                            style: const TextStyle(fontSize: 13)),
+                        trailing: const Icon(Icons.chevron_right, size: 18),
+                        onTap: () async {
+                          final ok = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    StudioDetailPage(studioId: s.parentId)),
+                          );
+                          if (ok == true && mounted) _load();
+                        },
+                      ),
+                    if (s.childStudios.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('子工作室（${s.childStudios.length}）',
+                          style: theme.textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      for (final c in s.childStudios)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: c.imagePath.isEmpty
+                                  ? Container(
+                                      color: theme
+                                          .colorScheme.surfaceContainerHighest,
+                                      alignment: Alignment.center,
+                                      child: const Icon(Icons.business_outlined,
+                                          size: 18),
+                                    )
+                                  : AuthImage(
+                                      rawPath: c.imagePath,
+                                      width: 40,
+                                      height: 40,
+                                    ),
+                            ),
+                          ),
+                          title: Text(c.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13)),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () async {
+                            final ok = await Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      StudioDetailPage(studioId: c.id)),
+                            );
+                            if (ok == true && mounted) _load();
+                          },
+                        ),
+                      const SizedBox(height: 6),
+                    ],
                     OutlinedButton.icon(
                       onPressed: _openScrape,
                       icon: const Icon(Icons.travel_explore, size: 18),

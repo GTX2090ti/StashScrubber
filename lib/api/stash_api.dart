@@ -734,7 +734,7 @@ class StashApi {
       query FindPerformer(\$id: ID!) {
         findPerformer(id: \$id) {
           id name disambiguation alias_list image_path birthdate country ethnicity
-          measurements career_length details rating100
+          measurements career_length details rating100 favorite
           tags { id name }
         }
       }''';
@@ -746,7 +746,11 @@ class StashApi {
   Future<Studio?> findStudio(String id) async {
     const q = '''
       query FindStudio(\$id: ID!) {
-        findStudio(id: \$id) { id name image_path rating100 scene_count }
+        findStudio(id: \$id) {
+          id name image_path rating100 scene_count favorite
+          parent_studio { id name }
+          child_studios { id name image_path }
+        }
       }''';
     final d = await query(q, {'id': id});
     final s = d?['findStudio'];
@@ -771,7 +775,7 @@ class StashApi {
       query FindPerformers(\$filter: FindFilterType!) {
         findPerformers(filter: \$filter) {
           count
-          performers { id name disambiguation image_path birthdate country rating100 scene_count tags { id name } }
+          performers { id name disambiguation image_path birthdate country rating100 scene_count favorite tags { id name } }
         }
       }''';
     final filter = <String, dynamic>{
@@ -796,12 +800,13 @@ class StashApi {
     String? q,
     String sort = 'name',
     String direction = 'ASC',
+    Map<String, dynamic>? studioFilter,
   }) async {
     const gq = '''
-      query FindStudios(\$filter: FindFilterType!) {
-        findStudios(filter: \$filter) {
+      query FindStudios(\$filter: FindFilterType!, \$sf: StudioFilterType) {
+        findStudios(filter: \$filter, studio_filter: \$sf) {
           count
-          studios { id name image_path rating100 scene_count }
+          studios { id name image_path rating100 scene_count favorite }
         }
       }''';
     final filter = <String, dynamic>{
@@ -811,7 +816,11 @@ class StashApi {
       'direction': direction,
       if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
     };
-    final d = await query(gq, {'filter': filter});
+    final vars = <String, dynamic>{'filter': filter};
+    if (studioFilter != null && studioFilter.isNotEmpty) {
+      vars['sf'] = studioFilter;
+    }
+    final d = await query(gq, vars);
     final fp = d?['findStudios'];
     if (fp == null) return const FindResult<Studio>(count: 0, items: []);
     return FindResult<Studio>(
@@ -1085,8 +1094,11 @@ class StashApi {
   }
 
   /// 写回削刮结果：仅写非空字段；库内不存在自动创建；可选图片。
+  /// 写回短片削刮结果。[keepOriginalStudio] 为 true 时若本地已有工作室则保留
+  /// 原工作室（与演员"默认保留原名"同理），不覆盖 studio_id。
   Future<int> applyScrapedScene(
-      ScrapedScene s, String targetId, bool includeImage) async {
+      ScrapedScene s, String targetId, bool includeImage,
+      {bool keepOriginalStudio = true}) async {
     final input = <String, dynamic>{'id': targetId};
     var changed = 0;
     if (s.title.isNotEmpty) {
@@ -1102,8 +1114,19 @@ class StashApi {
       changed++;
     }
     if (s.studio != null) {
-      input['studio_id'] = await _resolveStudioId(s.studio!);
-      changed++;
+      var writeStudio = true;
+      if (keepOriginalStudio) {
+        try {
+          final cur = await findScene(targetId);
+          if (cur?.studio != null) writeStudio = false;
+        } catch (_) {
+          // 查询失败时按原逻辑写入，不阻塞削刮
+        }
+      }
+      if (writeStudio) {
+        input['studio_id'] = await _resolveStudioId(s.studio!);
+        changed++;
+      }
     }
     if (s.performers.isNotEmpty) {
       final ids = <String>[];

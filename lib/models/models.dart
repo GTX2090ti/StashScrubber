@@ -34,6 +34,10 @@ class Studio {
   final String imagePath;
   final int rating100;
   final int sceneCount;
+  final bool favorite;
+  final String parentId;
+  final String parentName;
+  final List<Studio> childStudios;
 
   const Studio({
     required this.id,
@@ -41,6 +45,10 @@ class Studio {
     this.imagePath = '',
     this.rating100 = 0,
     this.sceneCount = 0,
+    this.favorite = false,
+    this.parentId = '',
+    this.parentName = '',
+    this.childStudios = const [],
   });
 
   factory Studio.fromJson(dynamic j) => Studio(
@@ -49,6 +57,10 @@ class Studio {
         imagePath: _s(j?['image_path']),
         rating100: _i(j?['rating100']),
         sceneCount: _i(j?['scene_count']),
+        favorite: j?['favorite'] == true,
+        parentId: _s(j?['parent_studio']?['id']),
+        parentName: _s(j?['parent_studio']?['name']),
+        childStudios: Studio.listFrom(j?['child_studios']),
       );
 
   static List<Studio> listFrom(dynamic v) =>
@@ -69,6 +81,7 @@ class Performer {
   final String details;
   final int rating100;
   final int sceneCount;
+  final bool favorite;
   final List<Tag> tags;
 
   const Performer({
@@ -85,6 +98,7 @@ class Performer {
     this.details = '',
     this.rating100 = 0,
     this.sceneCount = 0,
+    this.favorite = false,
     this.tags = const [],
   });
 
@@ -103,6 +117,7 @@ class Performer {
         details: _s(j?['details']),
         rating100: _i(j?['rating100']),
         sceneCount: _i(j?['scene_count']),
+        favorite: j?['favorite'] == true,
         tags: Tag.listFrom(j?['tags']),
       );
 

@@ -103,6 +103,8 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
     try {
       await _api.updateScene({'id': widget.sceneId, 'organized': target});
       if (mounted) setState(() => _scene = s.copyWith(organized: target));
+      // 通知列表刷新（已修复刷新后保持滚动位置），收藏页下同步移除/更新条目。
+      widget.onChanged?.call();
     } catch (_) {
       // 忽略失败
     }
@@ -393,7 +395,7 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
                           height: 14,
                           thickness: 0.6,
                           color: theme.colorScheme.outlineVariant
-                              .withOpacity(0.7),
+                              .withValues(alpha: 0.7),
                         ),
                       ],
                     ],

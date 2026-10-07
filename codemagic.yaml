@@ -1,0 +1,33 @@
+workflows:
+  ios-ipa:
+    name: Build unsigned IPA (Flutter)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Get dependencies
+        script: |
+          set -e
+          flutter pub get
+      - name: Build iOS (unsigned)
+        script: |
+          set -e
+          flutter build ios --release --no-codesign
+      - name: Package IPA
+        script: |
+          set -e
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -R StashScrubber.app Payload/
+          zip -r ../../../StashScrubber-unsigned.ipa Payload
+    artifacts:
+      - StashScrubber-unsigned.ipa

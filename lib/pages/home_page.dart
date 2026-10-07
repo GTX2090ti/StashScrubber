@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/slot_badge.dart';
+import 'favorites_page.dart';
 import 'library_page.dart';
 import 'scene_list_page.dart';
 import 'settings_page.dart';
 
-/// 首页：底部 4 个入口（场景 / 收藏 / 资料库 / 设置，对齐 Stash web 打包 app）。
+/// 首页：底部 4 个入口（短片 / 收藏 / 资料库 / 设置，对齐 Stash web 打包 app）。
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -22,7 +23,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final pages = [
       SceneListPage(embedded: true),
-      SceneListPage(embedded: true, onlyOrganized: true),
+      const FavoritesPage(embedded: true),
       const LibraryPage(embedded: true),
       const SettingsPage(embedded: true),
     ];
@@ -48,7 +49,7 @@ class _HomePageState extends State<HomePage> {
           selectedIndex: _tab,
           onDestinationSelected: (i) => setState(() => _tab = i),
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.movie_outlined), selectedIcon: Icon(Icons.movie), label: '场景'),
+            NavigationDestination(icon: Icon(Icons.movie_outlined), selectedIcon: Icon(Icons.movie), label: '短片'),
             NavigationDestination(icon: Icon(Icons.star_outline), selectedIcon: Icon(Icons.star), label: '收藏'),
             NavigationDestination(icon: Icon(Icons.video_library_outlined), selectedIcon: Icon(Icons.video_library), label: '资料库'),
             NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: '设置'),
