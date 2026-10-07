@@ -4,6 +4,7 @@ import '../api/stash_api.dart';
 import '../models/models.dart';
 import '../settings/app_settings.dart';
 import '../widgets/common.dart';
+import 'adaptive_grid.dart';
 import '../widgets/zh_toolbar.dart';
 import 'scene_detail_page.dart';
 import 'scene_filter_sheet.dart';
@@ -736,12 +737,13 @@ class _SceneListPageState extends State<SceneListPage> {
               )
             : RefreshIndicator(
                 onRefresh: _reload,
-                child: GridView.builder(
+                child: LayoutBuilder(builder: (context, c) {
+                  return GridView.builder(
                   key: PageStorageKey(widget.onlyOrganized ? 'fav_grid' : 'scene_grid'),
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: adaptiveColumnCount(c.maxWidth),
                     childAspectRatio: 0.95,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 12,
@@ -796,7 +798,8 @@ class _SceneListPageState extends State<SceneListPage> {
                           : null,
                     );
                   },
-                ),
+                );
+                }),
               ),
       ),
       if (_selectMode) _batchBar(),

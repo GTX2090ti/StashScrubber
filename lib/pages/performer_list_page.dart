@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../settings/app_settings.dart';
 import '../widgets/common.dart';
+import 'adaptive_grid.dart';
 import '../widgets/zh_toolbar.dart';
 import 'performer_create_page.dart';
 import 'performer_detail_page.dart';
@@ -330,12 +331,13 @@ class _PerformerListPageState extends State<PerformerListPage> {
                 onRetry: _reload)
             : RefreshIndicator(
                 onRefresh: _reload,
-                child: GridView.builder(
+                child: LayoutBuilder(builder: (context, c) {
+                  return GridView.builder(
                   key: const PageStorageKey('performer_grid'),
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: adaptiveColumnCount(c.maxWidth),
                     mainAxisExtent: 86,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
@@ -404,7 +406,8 @@ class _PerformerListPageState extends State<PerformerListPage> {
                       ),
                     );
                   },
-                ),
+                );
+                }),
               ),
       ),
     ]);

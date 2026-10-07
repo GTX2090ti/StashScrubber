@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../settings/app_settings.dart';
 import '../widgets/common.dart';
+import 'adaptive_grid.dart';
 import '../widgets/zh_toolbar.dart';
 import 'studio_create_page.dart';
 import 'studio_detail_page.dart';
@@ -330,12 +331,13 @@ class _StudioListPageState extends State<StudioListPage> {
                 onRetry: _reload)
             : RefreshIndicator(
                 onRefresh: _reload,
-                child: GridView.builder(
+                child: LayoutBuilder(builder: (context, c) {
+                  return GridView.builder(
                   key: const PageStorageKey('studio_grid'),
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: adaptiveColumnCount(c.maxWidth),
                     childAspectRatio: 1.0,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 12,
@@ -383,7 +385,8 @@ class _StudioListPageState extends State<StudioListPage> {
                       ]),
                     );
                   },
-                ),
+                );
+                }),
               ),
       ),
     ]);

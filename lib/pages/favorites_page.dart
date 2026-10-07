@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../widgets/common.dart';
+import 'adaptive_grid.dart';
 import 'performer_detail_page.dart';
 import 'scene_list_page.dart';
 import 'studio_detail_page.dart';
@@ -152,10 +153,11 @@ class _FavPerformersState extends State<_FavPerformers> {
     }
     return RefreshIndicator(
       onRefresh: _load,
-      child: GridView.builder(
+      child: LayoutBuilder(builder: (context, c) {
+        return GridView.builder(
         padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: adaptiveColumnCount(c.maxWidth, minCols: 3),
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
           childAspectRatio: 0.62,
@@ -205,7 +207,8 @@ class _FavPerformersState extends State<_FavPerformers> {
             ]),
           );
         },
-      ),
+      );
+      }),
     );
   }
 }
@@ -329,11 +332,12 @@ class _FavStudiosState extends State<_FavStudios> {
     }
     return RefreshIndicator(
       onRefresh: _reload,
-      child: GridView.builder(
+      child: LayoutBuilder(builder: (context, c) {
+        return GridView.builder(
         controller: _scroll,
         padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: adaptiveColumnCount(c.maxWidth, minCols: 3),
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
           childAspectRatio: 0.62,
@@ -392,7 +396,8 @@ class _FavStudiosState extends State<_FavStudios> {
             ]),
           );
         },
-      ),
+      );
+      }),
     );
   }
 }
