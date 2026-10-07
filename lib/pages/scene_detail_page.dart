@@ -228,23 +228,42 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
                   empty: _error.isNotEmpty ? _error : '加载失败',
                   error: _error,
                   onRetry: _load)
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Stack(
+              : LayoutBuilder(builder: (context, c) {
+                  final wide = c.maxWidth >= 700;
+                  final cover = ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: AuthImage(
-                            rawPath: s.paths.raw,
-                            fit: BoxFit.contain,
-                            radius: 12,
-                            fallbackIcon: Icons.movie_outlined,
+                        AuthImage(
+                          rawPath: s.paths.raw,
+                          fit: BoxFit.cover,
+                          radius: 0,
+                          fallbackIcon: Icons.movie_outlined,
+                        ),
+                        // 底部渐变过渡，播放器式背景衔接正文
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            height: 90,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [
+                                  Colors.black.withValues(alpha: 0.55),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                  );
+                  final info = <Widget>[
                     Text(
                       s.title.isNotEmpty ? s.title : '（无标题）',
                       style: theme.textTheme.headlineSmall
@@ -424,8 +443,32 @@ class _SceneDetailPageState extends State<SceneDetailPage> {
                               ?.copyWith(height: 1.6)),
                     ],
                     const SizedBox(height: 24),
-                  ],
-                ),
+                  ];
+                  return ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: wide
+                        ? [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SizedBox(
+                                    width: c.maxWidth * 0.42,
+                                    height: 340,
+                                    child: cover),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: info,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ]
+                        : [SizedBox(height: 280, child: cover), ...info],
+                  );
+                }),
     );
   }
 }

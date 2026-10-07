@@ -139,7 +139,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         Text('关于', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        Text('StashScrubber Flutter 1.6.65', style: theme.textTheme.bodySmall),
+        Text('StashScrubber Flutter 1.6.66', style: theme.textTheme.bodySmall),
         if (!_cfg.storageAvailable)
           Padding(
             padding: const EdgeInsets.only(top: 8),
