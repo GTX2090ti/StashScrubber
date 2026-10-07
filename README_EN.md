@@ -1,8 +1,10 @@
-# StashScrubber (HarmonyOS)
+# StashScrubber (iOS)
 
-A native HarmonyOS NEXT client (Flutter) for the [Stash](https://github.com/stashapp/stash) media manager, compatible with **Stash 0.31.x**.
+An **iOS client (Flutter)** for the [Stash](https://github.com/stashapp/stash) media manager, compatible with **Stash 0.31.x**. Ported from the HarmonyOS Flutter version (StashScrubber-Harmony), feature-synced to v1.6.64.
 
-[中文说明](README.md) | [Download Releases](https://github.com/GTX2090ti/StashScrubber-Harmony/releases)
+> The original SwiftUI native iOS app (v1.6.0) is archived on branch `backup/native-ios-1.6.0`.
+
+[中文说明](README.md) | [iOS 构建说明（中文）](BUILD_IOS_ZH.md) | [iOS Build Guide (EN)](BUILD_IOS_EN.md)
 
 ---
 
@@ -12,70 +14,39 @@ A native HarmonyOS NEXT client (Flutter) for the [Stash](https://github.com/stas
 - Two-column grid cards: cover, duration, resolution, favorite star, **subtitle badge** (shown when external captions are detected)
 - Infinite scroll with position restore on back; no paging buttons
 - Combined search: title / path / details + performer name + tag + studio
-- Sort: date added / date modified / title / file size / duration / rating / studio, etc. (0.31.1 enums)
-- Filters: rating / date / duration / organized / studio / performer / tag (multi-select + search)
-- Batch actions: favorite, rating, tags, **merge**, **generate covers**, select all
-- Detail page: cover, info, links to performers / studio / tags, edit, scrape, generate cover, favorite
-- **File section**: full path on its own line with size / duration / modified time; multi-file blocks; set default file
+- Sort (date newest-first, etc.) + filters (studio/performer/tag with search & multi-select) + batch actions (favorite / rating / tags / merge / generate covers)
+- Detail: scrape (**keeps existing studio**), edit, favorite, merge, generate cover, copy file path, performer/studio links
+- **Favorites page with 3 tabs**: Scenes (organized) / Performers (starred) / Studios (starred)
 
-### Performers · Studios · Tags
-- Grid/list cards + infinite scroll + search + **sort**
-- Performer detail: basic info, **aliases** (5 shown by default, expandable), related scenes
-- **Performer merge**: from the detail page, multi-select source performers and merge into the current one — resolves duplicates / name clashes
-- **Add** (list page) / **Delete** (detail page, with confirmation)
-- Edit: basic fields, tags (multi-select + search), dedupe on create
+### Performers
+- Grid cards + infinite scroll + search; detail shows aliases (default 5, expandable), merge, delete, **favorite star**
+- Scrape (Stash-box / JavDB etc., keeps original name by default), edit, manual create
 
-### Scraping
-- Three modes: fragment / name / URL scraping
-- Sources: local scrapers + **Stash-box** (StashDB etc.); fragment mode auto-queries box using the local performer name
-- Preview: name / aliases / birthdate / country / measurements / career / tags + image, "Apply & write back" on top
-- Keeps the original performer name by default; write-back compatible with 0.31.1 (`height_cm` / `alias_list` / `performer_input`)
-- **Friendly Chinese error messages** (404 / timeout / not implemented / site fetch failure)
-- **Name-clash protection on write-back**: if another performer already has the same name, the name field is skipped and the rest are saved
+### Studios
+- Grid cards + infinite scroll + search; detail shows **parent / child studios** (navigable), **favorite star**, delete
+- Scrape, edit, manual create
 
-### Scan · Jobs · Generate
-- Scan: all or **selected sub-folders**; optional cover / preview / sprite / phash generation
-- Live Stash job queue: scan / generate / clean task progress
-- **Generate covers**: single (detail page) / batch (multi-select) / global (tasks page) — 0.31.1 `metadataGenerate` + `sceneIDs`
+### Tags
+- Browse all tags + scenes per tag; related scenes on detail
 
-### Search & Input
-- **Clear button** on every search bar (scenes / performers / studios / tags / filters / merge / jobs / scrape)
-- **Auto date dashes**: type 20261003 → automatically formatted as 2026-10-03
+### Servers
+- Multi-profile (LAN / WAN, path prefix support) + one-tap switch + server settings in a submenu
+- API Key auth, connection test, network log, diagnostics
 
-### Servers & Settings
-- Multiple server profiles: LAN / WAN address + API key, auto routing by latency
-- Server-related settings grouped under a sub-menu
-- Diagnostics: profile / routing / latency / Stash version
+### Scan / Tasks
+- Selective folder scanning (scenes + images), live task list, cleanup tasks
 
----
+### Other
+- 3-mode theme (system / light / dark), generate covers, subtitle detection
 
-## Install
+## Build
 
-- Unsigned HAP: `hdc install -r StashScrubber-Flutter-vX.Y.Z-unsigned.hap`
-  (or install via DevEco Studio with your debug signing profile)
-- Requires HarmonyOS NEXT (API 18+)
+Requires macOS + Xcode 15+, see [BUILD_IOS_EN.md](BUILD_IOS_EN.md). CI uses CodeMagic (`codemagic.yaml`) — pushing `main` auto-builds an unsigned IPA.
 
-## Download
+## Server config
 
-Releases: <https://github.com/GTX2090ti/StashScrubber-Harmony/releases>
-
-## Development
-
-```bash
-flutter pub get        # fetch dependencies
-flutter analyze        # static analysis
-cd ohos && hvigorw assembleHap -p product=default -p buildMode=release   # build HAP
-```
-
-## Changelog
-
-- **v1.6.57**: Performer merge (⧉ button on detail page — multi-select source performers, merge into the current one; resolves duplicates / name clashes); name-clash protection on write-back (UNIQUE conflict → skip the name, save the rest)
-- **v1.6.55**: Friendly Chinese scrape errors (404 / timeout / not implemented / site fetch failure); auto date dashes (YYYY-MM-DD); file-section divider
-- **v1.6.52**: Performer fragment scraping fixed (0.31.1 returns not implemented for performer_id → now sends performer_input)
-- **v1.6.51**: Clear button on every search bar (scenes / performers / studios / tags / filters / merge / jobs / scrape)
-- **v1.6.50**: Simplified Chinese terminology (phash / sprite / preview); generate-cover query field fix (interactiveHeatmaps)
-- **v1.6.48**: Sort for performer / studio main lists; sort for related scenes; scene detail file section (full path wrapping, size / duration / modified time, multi-file blocks, set default file)
-- **v1.6.46**: Generate covers for scenes (detail + batch); Stash-box fragment scraping (uses local performer name); keep original performer name on scrape by default; performer aliases on detail (5 shown, expandable); subtitle badge on scene covers; add/delete performers & studios; fix performer detail 422 (`Performer.alias_list`)
-- Earlier: bottom navigation, infinite scroll, paging removed, favorites, 0.31.1 sort enums, scrape write-back field compatibility, Chinese-localized copy & paste
-
-> Note: Starting from v1.6.46 this repository hosts the full Flutter source code; the earlier ArkTS version remains in git history (tag v1.6.1 and before).
+1. Add a profile in **Settings**:
+   - LAN: `http://<NAS-IP>:9999`
+   - WAN: `https://stash.example.com` (path prefix supported; `/graphql` is appended automatically)
+2. If Stash uses an API Key, fill it in for the profile.
+3. Tap **Test connection**, then switch LAN/WAN profiles from any list page.
