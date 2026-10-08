@@ -59,6 +59,8 @@ class _SceneListPageState extends State<SceneListPage> {
   Set<String> _selected = {};
 
   List<Tag> _allTags = [];
+  List<Studio> _allStudios = [];
+  List<Performer> _allPerformers = [];
   bool _batchBusy = false;
 
   static const int _perPage = 60;
@@ -294,6 +296,96 @@ class _SceneListPageState extends State<SceneListPage> {
     }
     if (!mounted) return;
     _finishBatch('${add ? "已添加标签" : "已移除标签"} $done 个', failed);
+  }
+
+  /// 批量设置工作室（单选，直接替换）。
+  Future<void> _batchStudio() async {
+    if (_selected.isEmpty) return;
+    if (_allStudios.isEmpty) {
+      try {
+        final list = await _api.allStudios();
+        if (!mounted) return;
+        setState(() => _allStudios = list);
+      } catch (_) {
+        if (mounted) {
+          showToast(context, '加载工作室列表失败', error: true);
+          return;
+        }
+      }
+    }
+    if (!mounted) return;
+    if (_allStudios.isEmpty) {
+      showToast(context, '没有可选的工作室', error: true);
+      return;
+    }
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _SinglePickerSheet(
+        title: '设置工作室（${_selected.length} 个短片）',
+        entries: _allStudios.map((s) => (s.id, s.name)).toList(),
+      ),
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+    setState(() => _batchBusy = true);
+    var done = 0;
+    var failed = 0;
+    for (final id in List<String>.from(_selected)) {
+      try {
+        await _api.updateScene({'id': id, 'studio_id': picked});
+        done++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    _finishBatch('已设置工作室 $done 个', failed);
+  }
+
+  /// 批量添加演员（多选，合并进各短片已有演员，不覆盖）。
+  Future<void> _batchPerformers() async {
+    if (_selected.isEmpty) return;
+    if (_allPerformers.isEmpty) {
+      try {
+        final list = await _api.allPerformers();
+        if (!mounted) return;
+        setState(() => _allPerformers = list);
+      } catch (_) {
+        if (mounted) {
+          showToast(context, '加载演员列表失败', error: true);
+          return;
+        }
+      }
+    }
+    if (!mounted) return;
+    if (_allPerformers.isEmpty) {
+      showToast(context, '没有可选的演员', error: true);
+      return;
+    }
+    final picks = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _EntityPickerSheet(
+        title: '选择要添加的演员（${_selected.length} 个短片）',
+        entries: _allPerformers.map((p) => (p.id, p.name)).toList(),
+      ),
+    );
+    if (picks == null || picks.isEmpty || !mounted) return;
+    setState(() => _batchBusy = true);
+    var done = 0;
+    var failed = 0;
+    for (final s in _selectedScenes) {
+      try {
+        final cur = s.performers.map((p) => p.id).toSet();
+        final next = cur.union(picks);
+        await _api.updateScene({'id': s.id, 'performer_ids': next.toList()});
+        done++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    _finishBatch('已添加演员 $done 个', failed);
   }
 
   void _finishBatch(String okText, int failed) {
@@ -691,6 +783,17 @@ class _SceneListPageState extends State<SceneListPage> {
           ),
           const SizedBox(width: 4),
           btn(
+            label: '工作室',
+            onPressed: has ? _batchStudio : null,
+            width: 62,
+          ),
+          const SizedBox(width: 4),
+          btn(
+            label: '演员',
+            onPressed: has ? _batchPerformers : null,
+          ),
+          const SizedBox(width: 4),
+          btn(
             label: '合并',
             onPressed: _selected.length >= 2 ? _batchMerge : null,
           ),
@@ -902,6 +1005,165 @@ class _RatingSheet extends StatelessWidget {
             title: const Text('清除评分'),
             onTap: () => Navigator.pop(context, 0),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 通用单选弹窗（带搜索），用于批量设置工作室。
+class _SinglePickerSheet extends StatefulWidget {
+  const _SinglePickerSheet({
+    required this.title,
+    required this.entries, // (id, name)
+  });
+  final String title;
+  final List<(String, String)> entries;
+
+  @override
+  State<_SinglePickerSheet> createState() => _SinglePickerSheetState();
+}
+
+class _SinglePickerSheetState extends State<_SinglePickerSheet> {
+  String _kw = '';
+
+  List<(String, String)> get _filtered {
+    if (_kw.isEmpty) return widget.entries;
+    final k = _kw.toLowerCase();
+    return widget.entries
+        .where((e) => e.$2.toLowerCase().contains(k))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          TextField(
+            autofocus: false,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search, size: 20),
+              hintText: '搜索',
+              isDense: true,
+            ),
+            onChanged: (v) => setState(() => _kw = v),
+          ),
+          const SizedBox(height: 4),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _filtered.length,
+              itemBuilder: (_, i) {
+                final e = _filtered[i];
+                return ListTile(
+                  dense: true,
+                  title: Text(e.$2),
+                  onTap: () => Navigator.pop(context, e.$1),
+                );
+              },
+            ),
+          ),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+/// 通用多选弹窗（带搜索），用于批量添加演员。
+class _EntityPickerSheet extends StatefulWidget {
+  const _EntityPickerSheet({
+    required this.title,
+    required this.entries, // (id, name)
+  });
+  final String title;
+  final List<(String, String)> entries;
+
+  @override
+  State<_EntityPickerSheet> createState() => _EntityPickerSheetState();
+}
+
+class _EntityPickerSheetState extends State<_EntityPickerSheet> {
+  final Set<String> _picked = {};
+  String _kw = '';
+
+  List<(String, String)> get _filtered {
+    if (_kw.isEmpty) return widget.entries;
+    final k = _kw.toLowerCase();
+    return widget.entries
+        .where((e) => e.$2.toLowerCase().contains(k))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          TextField(
+            autofocus: false,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search, size: 20),
+              hintText: '搜索',
+              isDense: true,
+            ),
+            onChanged: (v) => setState(() => _kw = v),
+          ),
+          const SizedBox(height: 4),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _filtered.length,
+              itemBuilder: (_, i) {
+                final e = _filtered[i];
+                return CheckboxListTile(
+                  dense: true,
+                  value: _picked.contains(e.$1),
+                  title: Text(e.$2),
+                  onChanged: (v) => setState(() {
+                    if (v == true) {
+                      _picked.add(e.$1);
+                    } else {
+                      _picked.remove(e.$1);
+                    }
+                  }),
+                );
+              },
+            ),
+          ),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton(
+                onPressed: _picked.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, _picked),
+                child: Text('确定（${_picked.length}）'),
+              ),
+            ),
+          ]),
         ],
       ),
     );
